@@ -16,7 +16,7 @@ import csv
 
 import asyncio
 import xml.etree.ElementTree as ET
-import pkg_resources
+# import pkg_resources
 import qtm
 
 import math

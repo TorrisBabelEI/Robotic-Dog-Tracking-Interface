@@ -18,11 +18,11 @@ if __name__ == '__main__':
     saveFlag = True
 
     # x0 = np.array([-1.5, 0, 0])
-    x0 = np.array([-2.046, 1.047, 0])
+    x0 = np.array([0, 0, 0])
     u0 = np.array([0, 0, 0])
     T = 60
 
-    traj_file_name = 'experiment/trajectory.pkl'
+    traj_file_name = 'experiment/traj/mppi_wenjian/test_global_pos.pkl'
     _, suffix = os.path.splitext(traj_file_name)
 
     if suffix == '.pkl':
