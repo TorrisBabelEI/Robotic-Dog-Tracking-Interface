@@ -37,6 +37,7 @@ class DenseTrajectoryTracker:
         
         self.n_points = len(self.trajectory)
         self.current_idx = 0
+        self.at_start = False
         
         # Read config
         with open(config_file_name) as f:
@@ -54,8 +55,8 @@ class DenseTrajectoryTracker:
         self.vy_max = 0.3
         self.wz_max = 1.5
         
-        # Lookahead for velocity computation (0.2s)
-        self.lookahead_steps = max(1, int(0.2 / dt))
+        # Lookahead for velocity computation
+        self.lookahead_steps = max(1, int(0.5 / dt))
         
         # Data logging
         self.time_traj = []
@@ -71,6 +72,34 @@ class DenseTrajectoryTracker:
 
     def compute_velocity_command(self, current_pos, current_yaw):
         """Compute velocity command based on current position and trajectory lookahead"""
+        # Go to start position first
+        if not self.at_start:
+            target_pos = self.trajectory[0, :2]
+            dx = target_pos[0] - current_pos[0]
+            dy = target_pos[1] - current_pos[1]
+            dist = np.sqrt(dx**2 + dy**2)
+            
+            if dist < 0.1:
+                self.at_start = True
+                print("Reached start position, beginning trajectory tracking")
+                return 0.0, 0.0, 0.0
+            
+            # Move to start with moderate speed
+            vx_world = dx / dist * 0.3
+            vy_world = dy / dist * 0.3
+            
+            vx_body = vx_world * np.cos(current_yaw) + vy_world * np.sin(current_yaw)
+            vy_body = -vx_world * np.sin(current_yaw) + vy_world * np.cos(current_yaw)
+            
+            wz = 0.0
+            if self.use_yaw:
+                target_yaw = self.trajectory[0, 2]
+                yaw_error = target_yaw - current_yaw
+                yaw_error = np.arctan2(np.sin(yaw_error), np.cos(yaw_error))
+                wz = np.clip(yaw_error * 2.0, -self.wz_max, self.wz_max)
+            
+            return float(vx_body), float(vy_body), float(wz)
+        
         if self.current_idx >= self.n_points:
             return 0.0, 0.0, 0.0
         
@@ -107,14 +136,14 @@ class DenseTrajectoryTracker:
 
     def update_progress(self, current_pos):
         """Update trajectory index based on proximity to waypoints"""
-        if self.current_idx >= self.n_points:
+        if not self.at_start or self.current_idx >= self.n_points:
             return
         
         # Check if close to current target
         target_pos = self.trajectory[self.current_idx, :2]
         dist = np.linalg.norm(current_pos - target_pos)
         
-        if dist < 0.15:  # 15cm threshold
+        if dist < 0.1:
             self.current_idx += 1
 
     def save_data(self):
@@ -156,13 +185,14 @@ class DenseTrajectoryTracker:
         def on_packet(packet):
             t_now = time.time() - t_start
             
-            if t_now > timeout or self.current_idx >= self.n_points:
+            if t_now > timeout or (self.at_start and self.current_idx >= self.n_points):
                 self.cmd.mode = 0
                 self.cmd.velocity = [0, 0]
                 self.cmd.yawSpeed = 0.0
                 self.udp.SetSend(self.cmd)
                 self.udp.Send()
                 self.save_data()
+                print(f"Tracking complete. Points tracked: {self.current_idx}/{self.n_points}")
                 raise Exception("Tracking complete")
             
             bodies = packet.get_6d()[1]

@@ -18,6 +18,10 @@ if __name__ == '__main__':
     mode = 'dense'
     use_yaw = True  # Set to True to track yaw (requires 3rd row in data)
     
+    # Time configuration: set EITHER total_time OR dt
+    total_time = 15.0  # Total seconds to complete trajectory (set to None to use dt instead)
+    dt = 0.1           # Time step per waypoint (only used if total_time is None)
+    
     _, suffix = os.path.splitext(traj_file_name)
 
     if suffix == '.pkl':
@@ -35,12 +39,21 @@ if __name__ == '__main__':
             trajectory = data[:2, :].T
             use_yaw = False
 
+    print(f"Loaded trajectory with {len(trajectory)} points")
+    
+    # Calculate dt from total_time if specified
+    if total_time is not None:
+        dt = total_time / len(trajectory)
+        print(f"Total time: {total_time:.1f}s → dt={dt:.3f}s ({1/dt:.1f}Hz)")
+    else:
+        print(f"Using dt={dt}s → Total time: {len(trajectory) * dt:.1f}s ({1/dt:.1f}Hz)")
+
     if mode == 'dense':
         # Dense trajectory tracking
         saveFlag = True
-        tracker = DenseTrajectoryTracker(trajectory, dt=0.02, use_yaw=use_yaw, 
+        tracker = DenseTrajectoryTracker(trajectory, dt=dt, use_yaw=use_yaw, 
                                         save_flag=saveFlag, config_file_name=config_file_name)
-        asyncio.ensure_future(tracker.run(timeout=60))
+        asyncio.ensure_future(tracker.run(timeout=120))
         asyncio.get_event_loop().run_forever()
     else:
         # MPC for sparse waypoints
