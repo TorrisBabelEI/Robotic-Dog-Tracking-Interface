@@ -58,7 +58,11 @@ class DenseTrajectoryTracker:
         
         # Control gains for position tracking
         self.kp_pos = 2.0  # Position error gain
-        self.kp_yaw = 3.0  # Yaw error gain
+        self.kp_yaw = 1.5  # Yaw error gain (reduced to prevent oscillation)
+        self.kd_yaw = 0.3  # Yaw damping gain
+        
+        # Previous yaw for derivative
+        self.prev_yaw_error = 0.0
         
         # Data logging
         self.time_traj = []
@@ -84,6 +88,7 @@ class DenseTrajectoryTracker:
             if dist < 0.1:
                 self.at_start = True
                 self.t_start_tracking = t_elapsed
+                self.prev_yaw_error = 0.0  # Reset derivative term
                 print("Reached start position, beginning trajectory tracking")
                 return 0.0, 0.0, 0.0
             
@@ -129,13 +134,17 @@ class DenseTrajectoryTracker:
         vx_body = vx_world * np.cos(current_yaw) + vy_world * np.sin(current_yaw)
         vy_body = -vx_world * np.sin(current_yaw) + vy_world * np.cos(current_yaw)
         
-        # Yaw tracking with interpolation
+        # Yaw tracking with interpolation and damping
         wz = 0.0
         if self.use_yaw:
             target_yaw = (1 - alpha) * self.trajectory[target_idx, 2] + alpha * self.trajectory[target_idx + 1, 2]
             yaw_error = target_yaw - current_yaw
             yaw_error = np.arctan2(np.sin(yaw_error), np.cos(yaw_error))
-            wz = self.kp_yaw * yaw_error
+            
+            # PD control: proportional + derivative damping
+            yaw_error_rate = (yaw_error - self.prev_yaw_error) / self.dt
+            wz = self.kp_yaw * yaw_error - self.kd_yaw * yaw_error_rate
+            self.prev_yaw_error = yaw_error
         
         # Clip to limits
         vx_body = np.clip(vx_body, -self.vx_max, self.vx_max)
