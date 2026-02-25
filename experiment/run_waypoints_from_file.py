@@ -12,15 +12,15 @@ from DenseTrajectoryTracker import DenseTrajectoryTracker
 
 if __name__ == '__main__':
     config_file_name = 'experiment/config/config_dog.json'
-    traj_file_name = 'experiment/traj/mppi_wenjian/test_global_pos.pkl'
+    traj_file_name = 'experiment/traj/mppi_wenjian/global_pos.pkl'
     
     # Control mode: 'mpc' for sparse waypoints, 'dense' for dense trajectory tracking
     mode = 'dense'
     use_yaw = True  # Set to True to track yaw (requires 3rd row in data)
     
     # Time configuration: set EITHER total_time OR dt
-    total_time = 15.0  # Total seconds to complete trajectory (set to None to use dt instead)
-    dt = 0.1           # Time step per waypoint (only used if total_time is None)
+    total_time = None  # Total seconds to complete trajectory (set to None to use dt instead)
+    dt = .15           # Time step per waypoint (only used if total_time is None)
     
     _, suffix = os.path.splitext(traj_file_name)
 
