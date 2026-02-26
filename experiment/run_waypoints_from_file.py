@@ -51,14 +51,15 @@ if __name__ == '__main__':
     
     # Determine target based on constraints
     n_target = len(trajectory)
-    if n_target < 2:
-        raise ValueError("Trajectory must have at least 2 waypoints.")
     
     if target_waypoints is not None and target_waypoints < n_target:
         n_target = target_waypoints
     if current_freq > max_frequency:
         n_max_freq = int(len(trajectory) * max_frequency / current_freq)
         n_target = min(n_target, n_max_freq)
+
+    if n_target < 2:
+        raise ValueError("Trajectory must have at least 2 waypoints.")
     
     # Resample with first and last waypoints always included
     if n_target < len(trajectory):
