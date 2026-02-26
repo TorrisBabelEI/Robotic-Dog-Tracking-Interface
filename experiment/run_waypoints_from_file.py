@@ -19,12 +19,12 @@ if __name__ == '__main__':
     use_yaw = True  # Set to True to track yaw (requires 3rd row in data)
     
     # Time configuration: set EITHER total_time OR dt
-    total_time = 15  # Total seconds to complete trajectory (set to None to use dt instead)
-    dt = 0.1           # Time step per waypoint (only used if total_time is None)
+    total_time = 20  # Total seconds to complete trajectory (set to None to use dt instead)
+    dt = 0.15          # Time step per waypoint (only used if total_time is None)
     
     # Downsampling: auto-downsample if sending frequency too high (>10Hz), or specify target waypoints
-    target_waypoints = None  # Set to desired number to resample trajectory to exact count
-    max_frequency = 10.0     # Auto-downsample if frequency exceeds this (Hz)
+    target_waypoints = 150  # Set to desired number to resample trajectory to exact count
+    max_frequency = 20.0     # Auto-downsample if frequency exceeds this (Hz)
     
     _, suffix = os.path.splitext(traj_file_name)
 
@@ -66,12 +66,8 @@ if __name__ == '__main__':
         indices = np.round(np.linspace(0, len(trajectory)-1, n_target)).astype(int)
         trajectory = trajectory[indices]
 
-        # Calculate new frequency after downsampling
-        scale_factor = len(trajectory) / n_target 
-        new_freq = current_freq / scale_factor
-
         # Print downsampling info
-        print(f"Downsampled to {len(trajectory)} points ({current_freq:.1f}Hz -> {new_freq:.1f}Hz)")
+        print(f"Downsampled to {len(trajectory)} points.")
     
     # Calculate dt from total_time if specified
     if total_time is not None:

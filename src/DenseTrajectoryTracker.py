@@ -58,7 +58,7 @@ class DenseTrajectoryTracker:
         
         # Control gains for position tracking
         self.kp_pos = 2.0  # Position error gain
-        self.kp_yaw = 1.5  # Yaw error gain (reduced to prevent oscillation)
+        self.kp_yaw = 1.0  # Yaw error gain (reduced to prevent oscillation)
         self.kd_yaw = 0.3  # Yaw damping gain
         
         # Previous yaw for derivative
@@ -90,6 +90,7 @@ class DenseTrajectoryTracker:
                 self.t_start_tracking = t_elapsed
                 self.prev_yaw_error = 0.0  # Reset derivative term
                 print("Reached start position, beginning trajectory tracking")
+                time.sleep(0.5)
                 return 0.0, 0.0, 0.0
             
             # Move to start with moderate speed
