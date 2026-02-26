@@ -12,18 +12,18 @@ from DenseTrajectoryTracker import DenseTrajectoryTracker
 
 if __name__ == '__main__':
     config_file_name = 'experiment/config/config_dog.json'
-    traj_file_name = 'experiment/traj/mppi_wenjian/global_pos.pkl'
+    traj_file_name = 'experiment/traj/mppi_wenjian/test_global_pos.pkl'
     
     # Control mode: 'mpc' for sparse waypoints, 'dense' for dense trajectory tracking
     mode = 'dense'
     use_yaw = True  # Set to True to track yaw (requires 3rd row in data)
     
     # Time configuration: set EITHER total_time OR dt
-    total_time = 20  # Total seconds to complete trajectory (set to None to use dt instead)
-    dt = 0.15          # Time step per waypoint (only used if total_time is None)
+    total_time = 15  # Total seconds to complete trajectory (set to None to use dt instead)
+    dt = 0.1          # Time step per waypoint (only used if total_time is None)
     
     # Downsampling: auto-downsample if sending frequency too high (>10Hz), or specify target waypoints
-    target_waypoints = 150  # Set to desired number to resample trajectory to exact count
+    target_waypoints = None  # Set to desired number to resample trajectory to exact count
     max_frequency = 20.0     # Auto-downsample if frequency exceeds this (Hz)
     
     _, suffix = os.path.splitext(traj_file_name)
