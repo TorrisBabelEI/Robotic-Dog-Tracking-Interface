@@ -58,7 +58,7 @@ class DenseTrajectoryTracker:
         
         # Control gains for position tracking
         self.kp_pos = 2.0  # Position error gain
-        self.kp_yaw = 1.0  # Yaw error gain (reduced to prevent oscillation)
+        self.kp_yaw = 1.5  # Yaw error gain (reduced to prevent oscillation)
         self.kd_yaw = 0.3  # Yaw damping gain
         
         # Previous yaw for derivative
