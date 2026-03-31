@@ -12,7 +12,7 @@ from DenseTrajectoryTracker import DenseTrajectoryTracker
 
 if __name__ == '__main__':
     config_file_name = 'experiment/config/config_dog.json'
-    traj_file_name = 'experiment/traj/mppi_wenjian/test_global_pos.pkl'
+    traj_file_name = 'experiment/traj/TRo/PGDK/case3_m05_03_m03/test_global_pos.pkl'
     
     # Control mode: 'mpc' for sparse waypoints, 'dense' for dense trajectory tracking
     mode = 'dense'
@@ -20,11 +20,11 @@ if __name__ == '__main__':
     
     # Time configuration: set EITHER total_time OR dt
     total_time = None  # Total seconds to complete trajectory (set to None to use dt instead)
-    dt = 0.065          # Time step per waypoint (only used if total_time is None)
+    dt = 0.08          # Time step per waypoint (only used if total_time is None)
     
     # Downsampling: auto-downsample if sending frequency too high (>10Hz), or specify target waypoints
     target_waypoints = None  # Set to desired number to resample trajectory to exact count
-    max_frequency = 50.0     # Auto-downsample if frequency exceeds this (Hz)
+    max_frequency = 20.0      # Auto-downsample if frequency exceeds this (Hz)
     
     _, suffix = os.path.splitext(traj_file_name)
 
@@ -35,6 +35,10 @@ if __name__ == '__main__':
         else:
             trajectory = data[:2, :].T  # [x, y]
             use_yaw = False
+        
+        print('Initial Position: ', trajectory[0, :])
+        print('Final Position: ', trajectory[-1, :])
+
     else:
         data = pd.read_csv(traj_file_name, header=None).values
         if use_yaw and data.shape[0] >= 3:
@@ -42,6 +46,9 @@ if __name__ == '__main__':
         else:
             trajectory = data[:2, :].T
             use_yaw = False
+
+        print('Initial Position: ', trajectory[0, :])
+        print('Final Position: ', trajectory[-1, :])
 
     print(f"Loaded trajectory with {len(trajectory)} points")
     
