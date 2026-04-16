@@ -90,7 +90,7 @@ class DenseTrajectoryTracker:
                 self.t_start_tracking = t_elapsed
                 self.prev_yaw_error = 0.0  # Reset derivative term
                 print("Reached start position, beginning trajectory tracking")
-                time.sleep(0.5)
+                time.sleep(3.0)
                 return 0.0, 0.0, 0.0
             
             # Move to start with moderate speed
