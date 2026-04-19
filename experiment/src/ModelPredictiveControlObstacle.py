@@ -86,15 +86,11 @@ class MPCObstacle:
         P = ca.MX.sym('P', 5)  # [x0, y0, th0, xg, yg]
 
         cost = 0.0
-        Q, Qt, Rv, Rw, Rdu = 5.0, 50.0, 0.5, 0.1, 1.0
+        Q, Qt, Rv, Rw = 5.0, 50.0, 0.5, 0.1
         for k in range(N):
             dx = X[0, k] - P[3]; dy = X[1, k] - P[4]
             cost += Q * (dx**2 + dy**2)
             cost += Rv * (U[0, k]**2 + U[1, k]**2) + Rw * U[2, k]**2
-            if k > 0:
-                # penalise control rate: discourages sign-flipping between steps
-                cost += Rdu * ((U[0,k]-U[0,k-1])**2 + (U[1,k]-U[1,k-1])**2
-                               + Rdu * (U[2,k]-U[2,k-1])**2)
         dx = X[0, N] - P[3]; dy = X[1, N] - P[4]
         cost += Qt * (dx**2 + dy**2)
 
@@ -111,6 +107,17 @@ class MPCObstacle:
             tn = X[2,k] + U[2,k] * dt
             g += [X[0,k+1]-xn, X[1,k+1]-yn, X[2,k+1]-tn]
             lbg += [0,0,0]; ubg += [0,0,0]
+
+        # Hard acceleration constraints (matching original OptimalControl):
+        # |u[k+1] - u[k]| / dt <= acc_max  →  lb <= u[k+1]-u[k] <= ub
+        acc_vx = 0.1 * dt   # max vx change per step
+        acc_vy = 0.1 * dt   # max vy change per step
+        acc_wz = 0.1 * dt   # max wz change per step
+        for k in range(N - 1):
+            du = U[:, k+1] - U[:, k]
+            g += [du[0], du[1], du[2]]
+            lbg += [-acc_vx, -acc_vy, -acc_wz]
+            ubg += [ acc_vx,  acc_vy,  acc_wz]
 
         # Obstacle avoidance (smooth log-sum-exp, one constraint per obstacle per step)
         alpha = 10.0
