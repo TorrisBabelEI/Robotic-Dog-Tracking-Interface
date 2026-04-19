@@ -23,7 +23,7 @@ import qtm
 
 # ── Trust constants (from utils_trust_update.py) ─────────────────────────────
 _B_HR = 0.2
-_B_RH = 0.2
+_B_RH = 0.5   # faster recovery: T_rh was recovering too slowly vs T_hr
 _W_SAFETY = 1.0
 _W_COST = 0.05
 _COST_BASELINE = 10.0
@@ -86,7 +86,7 @@ class MPCObstacle:
         P = ca.MX.sym('P', 5)  # [x0, y0, th0, xg, yg]
 
         cost = 0.0
-        Q, Qt, Rv, Rw, Rdu = 5.0, 50.0, 0.1, 0.05, 0.5
+        Q, Qt, Rv, Rw, Rdu = 5.0, 50.0, 0.5, 0.1, 1.0
         for k in range(N):
             dx = X[0, k] - P[3]; dy = X[1, k] - P[4]
             cost += Q * (dx**2 + dy**2)
@@ -322,8 +322,11 @@ class ModelPredictiveControlObstacle:
         ax2.plot(x_traj[:, 0], x_traj[:, 1], 'b-', linewidth=2, label='Robot path')
         ax2.scatter(x_traj[0, 0],  x_traj[0, 1],  c='green', s=100, marker='o', label='Start')
         ax2.scatter(x_traj[-1, 0], x_traj[-1, 1], c='red',   s=100, marker='x', label='End')
-        for wp in self.waypoints:
-            ax2.scatter(wp[0], wp[1], c='lime', s=80, marker='*', zorder=5)
+        for i, wp in enumerate(self.waypoints):
+            ax2.scatter(wp[0], wp[1], c='lime', s=80, marker='*', zorder=5,
+                        label='Waypoints' if i == 0 else None)
+            ax2.annotate(str(i + 1), xy=(wp[0], wp[1]),
+                         xytext=(6, 6), textcoords='offset points', fontsize=10, fontweight='bold')
         for obs in self.obstacles:
             x_min, x_max, y_min, y_max = obs
             ax2.add_patch(plt.Rectangle((x_min, y_min), x_max-x_min, y_max-y_min,
