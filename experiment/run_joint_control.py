@@ -45,11 +45,13 @@ OBSTACLES = [
 # Obs 1 upper edge: y_max=-0.26  → crossing at y=0.4 gives 0.66 m clearance
 # Obs 2 left  edge: x_min= 0.52  → crossing at x=0.0 gives 0.52 m clearance
 WAYPOINTS = [
-    [-1.5,  -0.9],   # left lobe tip  (below Obs 1)
-    [ 0.0,   0.4],   # crossing point (well above Obs 1, clear of Obs 2)
-    [ 1.5,   0.2],   # right lobe tip (right of Obs 2)
-    [ 0.0,   0.4],   # crossing point (return leg)
-    # list repeats → controller cycles back to index 0
+    [-1.5,  -0.9],   # 1: left lobe tip  (below Obs 1)
+    [ 0.0,   0.4],   # 2: crossing point (above Obs 1, clear of Obs 2)
+    [ 0.78,  1.25],  # 3: above Obs 2    (forces right lobe to arc over it)
+    [ 1.5,   0.2],   # 4: right lobe tip (right of Obs 2)
+    [ 0.78,  1.25],  # 5: above Obs 2    (return arc)
+    [ 0.0,   0.4],   # 6: crossing point (return leg)
+    # list repeats → cycles back to index 0
 ]
 
 # ── MPC configuration ─────────────────────────────────────────────────────────
