@@ -86,11 +86,15 @@ class MPCObstacle:
         P = ca.MX.sym('P', 5)  # [x0, y0, th0, xg, yg]
 
         cost = 0.0
-        Q, Qt, Rv, Rw = 5.0, 50.0, 0.1, 0.05
+        Q, Qt, Rv, Rw, Rdu = 5.0, 50.0, 0.1, 0.05, 0.5
         for k in range(N):
             dx = X[0, k] - P[3]; dy = X[1, k] - P[4]
             cost += Q * (dx**2 + dy**2)
             cost += Rv * (U[0, k]**2 + U[1, k]**2) + Rw * U[2, k]**2
+            if k > 0:
+                # penalise control rate: discourages sign-flipping between steps
+                cost += Rdu * ((U[0,k]-U[0,k-1])**2 + (U[1,k]-U[1,k-1])**2
+                               + Rdu * (U[2,k]-U[2,k-1])**2)
         dx = X[0, N] - P[3]; dy = X[1, N] - P[4]
         cost += Qt * (dx**2 + dy**2)
 
@@ -417,7 +421,6 @@ class ModelPredictiveControlObstacle:
                 # alpha = robot share; human share = 1 - alpha
                 # When T_hr is low (human distrusted) alpha→1; when T_rh is low alpha→0
                 raw_alpha = self.T_hr / (self.T_hr + self.T_rh + 1e-8)
-                # Smooth but responsive: converges in ~2 steps instead of ~5
                 self.alpha = 0.05 * self.alpha + 0.95 * raw_alpha
                 u_final = self.alpha * u_mpc + (1 - self.alpha) * u_h
 

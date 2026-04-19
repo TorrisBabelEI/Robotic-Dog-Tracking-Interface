@@ -21,7 +21,7 @@ _AXIS_LX = 0   # left stick horizontal  → vy (strafe)
 _AXIS_LY = 1   # left stick vertical    → vx (forward, inverted)
 _AXIS_RX = 3   # right stick horizontal → wz (yaw)
 
-_DEADZONE = 0.10  # ignore stick deflections below this
+_DEADZONE = 0.05  # ignore stick deflections below this
 
 # Xbox button indices
 _BTN_A    = 0   # start control loop
