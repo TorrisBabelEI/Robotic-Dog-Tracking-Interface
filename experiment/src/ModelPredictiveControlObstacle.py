@@ -15,6 +15,7 @@ import csv
 import transforms3d
 import os
 import sys
+import matplotlib.pyplot as plt
 sys.path.append(os.getcwd() + '/src')
 sys.path.append('externals/unitree_legged_sdk/lib/python/amd64')
 import robot_interface as sdk
@@ -191,7 +192,6 @@ class ModelPredictiveControlObstacle:
     Online MPC + bi-directional trust shared control for Unitree Go1.
     Advances through sequential goal states; human can interrupt via joystick.
     """
-    TAKEOVER_SMOOTH = 0.2
 
     def __init__(self, mpc_config, waypoints, obstacles, box_limit,
                  joystick_handler=None,
@@ -284,6 +284,53 @@ class ModelPredictiveControlObstacle:
             w.writerow(self.T_hr_traj)
             w.writerow(self.T_rh_traj)
         print(f"Saved to {fname}")
+        self._plot()
+
+    def _plot(self):
+        if not self.time_traj:
+            return
+        t = np.array(self.time_traj)
+        alpha = np.array(self.alpha_traj)
+        T_hr  = np.array(self.T_hr_traj)
+        T_rh  = np.array(self.T_rh_traj)
+        x_traj = np.array(self.x_traj)
+
+        # Trust / alpha over time
+        fig, axes = plt.subplots(2, 1, figsize=(10, 5))
+        axes[0].plot(t, alpha, label='alpha (robot share)', linewidth=2)
+        axes[0].plot(t, T_hr,  label='T_hr (human→robot)',  linewidth=1.5)
+        axes[0].plot(t, T_rh,  label='T_rh (robot→human)',  linewidth=1.5)
+        axes[0].set_ylabel('Trust / Alpha')
+        axes[0].set_title('Bi-directional Trust Dynamics')
+        axes[0].legend(); axes[0].grid(True)
+
+        axes[1].set_ylabel('Alpha (robot share)')
+        axes[1].set_xlabel('Time (s)')
+        axes[1].plot(t, alpha, color='steelblue', linewidth=2)
+        axes[1].set_ylim(-0.05, 1.05); axes[1].grid(True)
+        plt.tight_layout()
+        plt.savefig(f"experiment/traj/joint_control_trust_{time.strftime('%Y%m%d%H%M%S')}.png",
+                    dpi=120)
+        plt.show()
+
+        # Trajectory
+        fig2, ax2 = plt.subplots(figsize=(8, 6))
+        ax2.plot(x_traj[:, 0], x_traj[:, 1], 'b-', linewidth=2, label='Robot path')
+        ax2.scatter(x_traj[0, 0],  x_traj[0, 1],  c='green', s=100, marker='o', label='Start')
+        ax2.scatter(x_traj[-1, 0], x_traj[-1, 1], c='red',   s=100, marker='x', label='End')
+        for wp in self.waypoints:
+            ax2.scatter(wp[0], wp[1], c='lime', s=80, marker='*', zorder=5)
+        for obs in self.obstacles:
+            x_min, x_max, y_min, y_max = obs
+            ax2.add_patch(plt.Rectangle((x_min, y_min), x_max-x_min, y_max-y_min,
+                                        color='gray', alpha=0.7))
+        ax2.set_xlabel('X (m)'); ax2.set_ylabel('Y (m)')
+        ax2.set_title('Robot Trajectory')
+        ax2.legend(); ax2.axis('equal'); ax2.grid(True)
+        plt.tight_layout()
+        plt.savefig(f"experiment/traj/joint_control_traj_{time.strftime('%Y%m%d%H%M%S')}.png",
+                    dpi=120)
+        plt.show()
 
     async def run(self, timeout=120.0):
         connection = await qtm.connect(self.IP_server)
@@ -357,19 +404,21 @@ class ModelPredictiveControlObstacle:
                 u_h = np.array([vx_h, vy_h, wz_h])
             human_override = np.linalg.norm(u_h) > 1e-3
 
+            # T_rh updates every step (safety context is always relevant)
             clearance = self._min_clearance(state[:2])
-            if human_override:
-                self.T_rh = _update_T_rh(self.T_rh, clearance,
-                                          self.mpc.obstacle_margin, mpc_cost)
+            self.T_rh = _update_T_rh(self.T_rh, clearance,
+                                      self.mpc.obstacle_margin, mpc_cost)
             self.T_hr = _update_T_hr(self.T_hr, human_override)
 
             if not human_override:
                 self.alpha = 1.0
                 u_final = u_mpc
             else:
+                # alpha = robot share; human share = 1 - alpha
+                # When T_hr is low (human distrusted) alpha→1; when T_rh is low alpha→0
                 raw_alpha = self.T_hr / (self.T_hr + self.T_rh + 1e-8)
-                self.alpha = (self.TAKEOVER_SMOOTH * self.alpha +
-                              (1 - self.TAKEOVER_SMOOTH) * raw_alpha)
+                # Smooth but responsive: converges in ~2 steps instead of ~5
+                self.alpha = 0.05 * self.alpha + 0.95 * raw_alpha
                 u_final = self.alpha * u_mpc + (1 - self.alpha) * u_h
 
             self._send(*u_final)

@@ -39,14 +39,17 @@ OBSTACLES = [
 # ── Waypoints ─────────────────────────────────────────────────────────────────
 # Four sparse goals that define the figure-8 loop.
 # MPC navigates between them with online obstacle avoidance.
-# The crossing near (0, 0) is NOT a waypoint — it is part of the MPC-planned
+# The crossing near (0, 0.4) is NOT a waypoint — it is part of the MPC-planned
 # path between goals, so the human can override it if it becomes blocked.
+#
+# Obs 1 upper edge: y_max=-0.26  → crossing at y=0.4 gives 0.66 m clearance
+# Obs 2 left  edge: x_min= 0.52  → crossing at x=0.0 gives 0.52 m clearance
 WAYPOINTS = [
     [-1.5,  -0.9],   # left lobe tip  (below Obs 1)
-    [ 0.0,   0.2],   # crossing point (above Obs 1, left of Obs 2)
+    [ 0.0,   0.4],   # crossing point (well above Obs 1, clear of Obs 2)
     [ 1.5,   0.2],   # right lobe tip (right of Obs 2)
-    [ 0.0,   0.2],   # crossing point (return leg)
-    # list repeats → controller cycles back to index 0 (see run_joint_control loop)
+    [ 0.0,   0.4],   # crossing point (return leg)
+    # list repeats → controller cycles back to index 0
 ]
 
 # ── MPC configuration ─────────────────────────────────────────────────────────
@@ -56,7 +59,7 @@ MPC_CONFIG = {
     'vx_max':          0.25,   # [m/s] — slow enough for human reaction
     'vy_max':          0.15,   # [m/s]
     'wz_max':          1.0,    # [rad/s]
-    'obstacle_margin': 0.20,   # [m] — Go1 half-width ~0.15 m + 5 cm buffer
+    'obstacle_margin': 0.35,   # [m] — Go1 half-width ~0.15 m + 0.20 m buffer
 }
 
 # ── Entry point ───────────────────────────────────────────────────────────────
