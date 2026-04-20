@@ -195,10 +195,12 @@ class MPCObstacle:
             ws[cs+3*(self.N-1):cs+3*self.N] = xopt[cs+3*(self.N-1):cs+3*self.N]
             self.warm_start = ws
             u = xopt[self.n_states:self.n_states+3]
+            self._last_u = u
             return u, time.time()-t0, cost
         except Exception as e:
             print(f"MPC solve failed: {e}")
-            return np.zeros(3), time.time()-t0, None
+            self.warm_start = None  # reset so next solve gets a fresh init
+            return self._last_u if hasattr(self, '_last_u') else np.zeros(3), time.time()-t0, None
 
 
 # ── Main controller class ─────────────────────────────────────────────────────
