@@ -32,8 +32,8 @@ from joystick_handler import JoystickHandler
 # ── Environment ───────────────────────────────────────────────────────────────
 BOX_LIMIT = [-2.2, 2.2, -1.6, 1.4]    # [x_min, x_max, y_min, y_max] (inset from walls)
 OBSTACLES = [
-    [-1.26,  0.22, -0.52, -0.26],      # Obs 1: lower-centre
-    [ 0.52,  1.04,  0.52,  1.04],      # Obs 2: upper-right
+    [-1.30, -0.26, -0.52, -0.26],      # Obs 1: lower-centre
+    [ 0.26,  0.78,  0.26,  0.78],      # Obs 2: upper-right
 ]
 
 # ── Waypoints ─────────────────────────────────────────────────────────────────
@@ -41,27 +41,24 @@ OBSTACLES = [
 # MPC navigates between them with online obstacle avoidance.
 # The crossing near (0, 0.4) is NOT a waypoint — it is part of the MPC-planned
 # path between goals, so the human can override it if it becomes blocked.
-#
-# Obs 1 upper edge: y_max=-0.26  → crossing at y=0.4 gives 0.66 m clearance
-# Obs 2 left  edge: x_min= 0.52  → crossing at x=0.0 gives 0.52 m clearance
 WAYPOINTS = [
-    [-1.5,  -0.9],   # 1: left lobe tip  (below Obs 1)
-    [ 0.0,   0.4],   # 2: crossing point (above Obs 1, clear of Obs 2)
-    [ 0.78,  1.25],  # 3: above Obs 2    (forces right lobe to arc over it)
-    [ 1.5,   0.2],   # 4: right lobe tip (right of Obs 2)
-    [ 0.78,  1.25],  # 5: above Obs 2    (return arc)
-    [ 0.0,   0.4],   # 6: crossing point (return leg)
+    [-1.5,  -0.9],   # 1: left lobe tip
+    [ 0.2,  -0.8],   # 2: to the right of Obs 1
+    [-0.5,   0.5],   # 3: crossing point
+    [ 0.8,   1.2],   # 4: above Obs 2
+    [ 1.5,   0.0],   # 5: right lobe tip
+    [-0.5,   0.5],   # 6: crossing point
     # list repeats → cycles back to index 0
 ]
 
 # ── MPC configuration ─────────────────────────────────────────────────────────
 MPC_CONFIG = {
     'dt':              0.2,    # [s]
-    'N':               10,     # horizon steps
+    'N':               20,     # horizon steps
     'vx_max':          0.25,   # [m/s] — slow enough for human reaction
-    'vy_max':          0.15,   # [m/s]
+    'vy_max':          0.25,   # [m/s]
     'wz_max':          1.0,    # [rad/s]
-    'obstacle_margin': 0.35,   # [m] — Go1 half-width ~0.15 m + 0.20 m buffer
+    'obstacle_margin': 0.25,   # [m] — Go1 half-width ~0.15 m + 0.10 m buffer
 }
 
 # ── Entry point ───────────────────────────────────────────────────────────────
