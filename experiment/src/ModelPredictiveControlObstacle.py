@@ -86,13 +86,17 @@ class MPCObstacle:
         P = ca.MX.sym('P', 5)  # [x0, y0, th0, xg, yg]
 
         cost = 0.0
-        Q, Qt, Rv, Rw = 5.0, 50.0, 0.5, 0.1
+        Q, Qt, Rv, Rw, Qyaw = 5.0, 50.0, 0.5, 0.1, 3.0
         for k in range(N):
             dx = X[0, k] - P[3]; dy = X[1, k] - P[4]
             cost += Q * (dx**2 + dy**2)
             cost += Rv * (U[0, k]**2 + U[1, k]**2) + Rw * U[2, k]**2
+            th_goal = ca.atan2(P[4] - X[1, k], P[3] - X[0, k])
+            cost += Qyaw * ca.sin(X[2, k] - th_goal)**2
         dx = X[0, N] - P[3]; dy = X[1, N] - P[4]
         cost += Qt * (dx**2 + dy**2)
+        th_goal = ca.atan2(P[4] - X[1, N], P[3] - X[0, N])
+        cost += Qyaw * 2.0 * ca.sin(X[2, N] - th_goal)**2
 
         g, lbg, ubg = [], [], []
 
@@ -144,8 +148,8 @@ class MPCObstacle:
             lbx += [bl[0], bl[2], -4*np.pi]
             ubx += [bl[1], bl[3],  4*np.pi]
         for _ in range(N):
-            lbx += [-self.vx_max, -self.vy_max, -self.wz_max]
-            ubx += [ self.vx_max,  self.vy_max,  self.wz_max]
+            lbx += [0, -self.vy_max, -self.wz_max]
+            ubx += [self.vx_max,  self.vy_max,  self.wz_max]
 
         z = ca.vertcat(ca.reshape(X, -1, 1), ca.reshape(U, -1, 1))
         nlp = {'x': z, 'f': cost, 'g': ca.vertcat(*g), 'p': P}
@@ -329,11 +333,15 @@ class ModelPredictiveControlObstacle:
         ax2.plot(x_traj[:, 0], x_traj[:, 1], 'b-', linewidth=2, label='Robot path')
         ax2.scatter(x_traj[0, 0],  x_traj[0, 1],  c='green', s=100, marker='o', label='Start')
         ax2.scatter(x_traj[-1, 0], x_traj[-1, 1], c='red',   s=100, marker='x', label='End')
+        seen = set()
         for i, wp in enumerate(self.waypoints):
             ax2.scatter(wp[0], wp[1], c='lime', s=80, marker='*', zorder=5,
                         label='Waypoints' if i == 0 else None)
-            ax2.annotate(str(i + 1), xy=(wp[0], wp[1]),
-                         xytext=(6, 6), textcoords='offset points', fontsize=10, fontweight='bold')
+            key = (round(wp[0], 4), round(wp[1], 4))
+            if key not in seen:
+                ax2.annotate(str(i + 1), xy=(wp[0], wp[1]),
+                             xytext=(6, 6), textcoords='offset points', fontsize=10, fontweight='bold')
+                seen.add(key)
         for obs in self.obstacles:
             x_min, x_max, y_min, y_max = obs
             ax2.add_patch(plt.Rectangle((x_min, y_min), x_max-x_min, y_max-y_min,
