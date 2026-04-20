@@ -86,13 +86,20 @@ class MPCObstacle:
         P = ca.MX.sym('P', 5)  # [x0, y0, th0, xg, yg]
 
         cost = 0.0
-        Q, Qt, Rv, Rw = 5.0, 50.0, 0.5, 0.1
+        Q, Qt, Rv, Rw, Qyaw = 5.0, 50.0, 0.5, 0.1, 2.0
         for k in range(N):
             dx = X[0, k] - P[3]; dy = X[1, k] - P[4]
-            cost += Q * (dx**2 + dy**2)
+            dist2 = dx**2 + dy**2
+            cost += Q * dist2
             cost += Rv * (U[0, k]**2 + U[1, k]**2) + Rw * U[2, k]**2
+            th_goal = ca.atan2(-dy, -dx)  # direction from state toward goal
+            yaw_err = ca.sin(X[2, k] - th_goal)**2
+            cost += Qyaw * (dist2 / (dist2 + 0.1)) * yaw_err  # fade out within ~0.3 m
         dx = X[0, N] - P[3]; dy = X[1, N] - P[4]
-        cost += Qt * (dx**2 + dy**2)
+        dist2 = dx**2 + dy**2
+        cost += Qt * dist2
+        th_goal = ca.atan2(-dy, -dx)
+        cost += Qyaw * 2.0 * (dist2 / (dist2 + 0.1)) * ca.sin(X[2, N] - th_goal)**2
 
         g, lbg, ubg = [], [], []
 
