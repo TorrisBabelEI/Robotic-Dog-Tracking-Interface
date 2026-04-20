@@ -86,17 +86,13 @@ class MPCObstacle:
         P = ca.MX.sym('P', 5)  # [x0, y0, th0, xg, yg]
 
         cost = 0.0
-        Q, Qt, Rv, Rw, Qyaw = 5.0, 50.0, 0.5, 0.1, 3.0
+        Q, Qt, Rv, Rw = 5.0, 50.0, 0.5, 0.1
         for k in range(N):
             dx = X[0, k] - P[3]; dy = X[1, k] - P[4]
             cost += Q * (dx**2 + dy**2)
             cost += Rv * (U[0, k]**2 + U[1, k]**2) + Rw * U[2, k]**2
-            th_goal = ca.atan2(P[4] - X[1, k], P[3] - X[0, k])
-            cost += Qyaw * ca.sin(X[2, k] - th_goal)**2
         dx = X[0, N] - P[3]; dy = X[1, N] - P[4]
         cost += Qt * (dx**2 + dy**2)
-        th_goal = ca.atan2(P[4] - X[1, N], P[3] - X[0, N])
-        cost += Qyaw * 2.0 * ca.sin(X[2, N] - th_goal)**2
 
         g, lbg, ubg = [], [], []
 
@@ -195,12 +191,10 @@ class MPCObstacle:
             ws[cs+3*(self.N-1):cs+3*self.N] = xopt[cs+3*(self.N-1):cs+3*self.N]
             self.warm_start = ws
             u = xopt[self.n_states:self.n_states+3]
-            self._last_u = u
             return u, time.time()-t0, cost
         except Exception as e:
             print(f"MPC solve failed: {e}")
-            self.warm_start = None  # reset so next solve gets a fresh init
-            return self._last_u if hasattr(self, '_last_u') else np.zeros(3), time.time()-t0, None
+            return np.zeros(3), time.time()-t0, None
 
 
 # ── Main controller class ─────────────────────────────────────────────────────
