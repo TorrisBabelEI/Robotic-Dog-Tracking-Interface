@@ -222,7 +222,7 @@ class ModelPredictiveControlObstacle:
         self.obstacles = obstacles
         self.save_flag = save_flag
         self.joystick = joystick_handler
-        self.offset = 0.15  # waypoint reach radius [m]
+        self.offset = 0.10  # waypoint reach radius [m]
 
         with open(config_file) as f:
             cfg = json.load(f)

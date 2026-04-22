@@ -13,8 +13,7 @@ Scenario:
 
 Environment:
   Lab bounds : x ∈ (-2.4, 2.4) m,  y ∈ (-1.8, 1.6) m
-  Obstacle 1 : [x_min=-1.26, x_max=0.22, y_min=-0.52, y_max=-0.26]  (lower-centre)
-  Obstacle 2 : [x_min= 0.52, x_max=1.04, y_min= 0.52, y_max= 1.04]  (upper-right)
+  Obstacle 1 and 2
 
 Waypoints — only the two lobe tips; MPC routes between them online:
   Left tip  → crossing → Right tip → crossing → (repeat)
@@ -32,22 +31,20 @@ from joystick_handler import JoystickHandler
 # ── Environment ───────────────────────────────────────────────────────────────
 BOX_LIMIT = [-2.2, 2.2, -1.6, 1.4]    # [x_min, x_max, y_min, y_max] (inset from walls)
 OBSTACLES = [
-    [-1.30, -0.26, -0.52, -0.26],      # Obs 1: lower-centre
-    [ 0.26,  0.78,  0.26,  0.78],      # Obs 2: upper-right
+    [-0.90, -0.38, -0.52, -0.26],      # Obs 1: lower-centre
+    [ 0.26,  0.78,  0.26,  0.52],      # Obs 2: upper-right
 ]
 
 # ── Waypoints ─────────────────────────────────────────────────────────────────
-# Four sparse goals that define the figure-8 loop.
 # MPC navigates between them with online obstacle avoidance.
-# The crossing near (0, 0.4) is NOT a waypoint — it is part of the MPC-planned
-# path between goals, so the human can override it if it becomes blocked.
 WAYPOINTS = [
-    [-1.5,  -0.9],   # 1: left lobe tip
-    [ 0.2,  -0.8],   # 2: to the right of Obs 1
-    [-0.5,   0.5],   # 3: crossing point
-    [ 0.8,   1.2],   # 4: above Obs 2
-    [ 1.5,   0.0],   # 5: right lobe tip
-    [-0.5,   0.5],   # 6: crossing point
+    [-2.0,  -1.0],
+    [ 0.2,  -0.8],
+    [-0.5,   0.5],
+    [ 0.8,   1.2],
+    [ 1.5,   0.0],
+    [-0.5,   0.5],
+    [-1.5,   0.3]
     # list repeats → cycles back to index 0
 ]
 
@@ -65,7 +62,7 @@ MPC_CONFIG = {
 if __name__ == '__main__':
     config_file = 'experiment/config/config_dog.json'
     save_flag   = True
-    timeout     = 300.0   # [s] max run time
+    timeout     = 200.0   # [s] max run time
 
     print("Initialising joystick / keyboard...")
     joystick = JoystickHandler(
