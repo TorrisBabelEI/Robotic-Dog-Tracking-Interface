@@ -130,13 +130,119 @@ not, by itself, a reliable load-bearing support.
    support the robot. Keep the physical power control accessible, but never use
    it as a normal exit while the robot is standing unsupported.
 
-If Go1 Wi-Fi and wired Qualisys are connected simultaneously, verify that the
-two subnets use the intended interfaces:
+#### Configure split routing for Go1 and MOCAP
+
+The verified laboratory topology is:
+
+| Host/interface | Address | Purpose |
+| --- | --- | --- |
+| Ubuntu `enp0s31f6` | `192.168.1.167/24` | Wired MOCAP network |
+| Ubuntu `wlp0s20f3` | `192.168.12.20/24` | Go1 Wi-Fi |
+| Go1 Raspberry Pi Wi-Fi | `192.168.12.1` | Gateway from Ubuntu |
+| Go1 Raspberry Pi `eth0` | `192.168.123.161` | Robot internal network |
+| Go1 low-level controller | `192.168.123.10:8007` | SDK command/state endpoint |
+| Ubuntu low-level UDP port | `8090` | Local SDK socket |
+
+Do **not** use the old global-route command:
 
 ```bash
+sudo route add default gw 192.168.12.1
+```
+
+A global default route can still lose to the existing Ethernet default route,
+and it can also redirect unrelated traffic. In the observed failure,
+`192.168.123.10` incorrectly went through `192.168.1.1` on `enp0s31f6`, so no
+packet reached Go1 even though its Wi-Fi was connected.
+
+Install a destination-specific route instead:
+
+```bash
+sudo ip route replace 192.168.123.0/24 \
+  via 192.168.12.1 dev wlp0s20f3 src 192.168.12.20
+```
+
+This route is temporary and normally disappears after rebooting or reconnecting
+the network. Verify both destinations before every experiment:
+
+```bash
+ip -br addr
+ip route get 192.168.12.1
 ip route get 192.168.123.10
 ip route get 192.168.1.122
 ```
+
+The important results should resemble:
+
+```text
+192.168.123.10 via 192.168.12.1 dev wlp0s20f3 src 192.168.12.20
+192.168.1.122 dev enp0s31f6 src 192.168.1.167
+```
+
+If the Ubuntu interface names or addresses have changed, substitute the values
+reported by `ip -br addr`; do not copy stale interface details blindly. Check
+for competing default routes without deleting anything:
+
+```bash
+ip route show default
+```
+
+#### Verify the Raspberry Pi bridge
+
+First confirm that Ubuntu can reach the Go1 Raspberry Pi:
+
+```bash
+ping -c 3 192.168.12.1
+ssh pi@192.168.12.1
+```
+
+On the Raspberry Pi, run the following read-only checks:
+
+```bash
+ip route get 192.168.123.10
+sudo sysctl net.ipv4.ip_forward
+sudo iptables -t nat -S POSTROUTING
+sudo iptables -S FORWARD
+```
+
+The verified robot currently reports:
+
+```text
+192.168.123.10 dev eth0 src 192.168.123.161
+net.ipv4.ip_forward = 1
+-A POSTROUTING -o wlan1 -j MASQUERADE
+-A POSTROUTING -o eth0 -j MASQUERADE
+-P FORWARD ACCEPT
+-A FORWARD -i wlan1 -o eth0 -j ACCEPT
+-A FORWARD -i eth0 -o wlan1 -j ACCEPT
+```
+
+Do not flush or replace these firewall rules during an experiment. If any rule
+is missing, stop and restore the laboratory bridge configuration before
+running the controller. Exit the Raspberry Pi shell before continuing:
+
+```bash
+exit
+```
+
+After correcting the Ubuntu route, test the internal controller. Some firmware
+may not answer ICMP, so a failed ping alone is not conclusive, but a successful
+reply confirms the forwarding path:
+
+```bash
+ping -c 5 192.168.123.10
+```
+
+The Wi-Fi link must also be stable. A single observed ping to `192.168.12.1`
+reached 264 ms, which is far beyond the controller's 20 ms communication
+limit. Before command-sending experiments, collect a larger diagnostic sample:
+
+```bash
+ping -c 50 -i 0.2 192.168.12.1
+```
+
+ICMP timing is not a substitute for the logged 500 Hz UDP acceptance test, but
+repeated tens-of-milliseconds or hundreds-of-milliseconds spikes are a stop
+condition for external-PC low-level control.
 
 ### 2. Power on Go1
 
@@ -193,6 +299,56 @@ python3 experiment/analyze_lowlevel_log.py \
 
 If `remote valid=1` and `L2+B=1` are not both observed reliably, do not run
 `leg-lift` or `leg-lift-sequence`.
+
+#### Diagnose a zero-feedback preflight
+
+If the analyzer reports all of the following, no valid `LowState` was received:
+
+```text
+network: rate=0.00 Hz, p99_gap=nan ms, max_gap=nan ms
+remote valid=0 buttons=0x0
+```
+
+Inspect the state tick, fresh-receive flag, and raw `UDP::Recv()` result:
+
+```bash
+cut -d, -f2,4,5 remote_preflight.csv | sort | uniq -c | head -20
+```
+
+The observed failed run produced approximately:
+
+```text
+15023 0,0,-1
+1     0,1,-1
+```
+
+`state_tick_ms=0`, `recv_ok=0`, and `recv_result=-1` mean that every receive
+attempt returned without a packet. The single `recv_ok=1` row is a known
+initialization artifact in the current runner: the first zero-filled state was
+incorrectly counted as fresh. It is not evidence of communication.
+
+First re-check that `192.168.123.10` uses the Wi-Fi-specific route above. If
+the route is correct but feedback remains at 0 Hz, stop the experiment. The
+current `remote-preflight` opens a connected UDP socket but intentionally sends
+no packet. Across the Raspberry Pi NAT, that may fail to create a return path;
+the Unitree low-level endpoint may also return state only to a client that is
+actively sending valid packets. Unitree's
+[native joystick example](https://github.com/unitreerobotics/unitree_legged_sdk/blob/go1/example/example_joystick.cpp)
+starts both send and receive loops, so receive-only behavior is not established
+by an official example.
+
+To observe traffic without transmitting an additional test command, run this
+in one terminal while repeating only `remote-preflight` in another:
+
+```bash
+sudo timeout 15 tcpdump -ni any \
+  'host 192.168.123.10 and (udp port 8007 or udp port 8090)'
+```
+
+Do not use `ground-handover`, increase torque, or run Unitree's low-level
+joystick example free-standing to work around 0 Hz feedback. The software must
+first be revised and reviewed to use an explicitly confirmed prone-damping
+probe, or another validated remote-state source.
 
 ### 4. Shut down after preflight, then restart for standing tests
 
