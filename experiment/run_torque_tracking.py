@@ -1,58 +1,35 @@
 #!/usr/bin/env python3
+"""Legacy guard for the removed Python low-level sender.
+
+The former implementation replayed an unvalidated pickle at an effective
+reference rate of about 5 Hz while placing all twelve joints in pure torque
+mode. Keeping a hard failure at the old entry point prevents accidental use
+on hardware; Git history retains the original source.
+"""
+
 import sys
-import time
-import math
-import numpy as np
-import joblib
-import os
 
-sys.path.append(os.getcwd()+'/externals/unitree_legged_sdk/lib/python/amd64')
-import robot_interface as sdk
 
-if __name__ == '__main__':
-    d = {'FR_0':0, 'FR_1':1, 'FR_2':2,
-         'FL_0':3, 'FL_1':4, 'FL_2':5, 
-         'RR_0':6, 'RR_1':7, 'RR_2':8, 
-         'RL_0':9, 'RL_1':10, 'RL_2':11}
-    
-    PosStopF = math.pow(10, 9)
-    VelStopF = 16000.0
-    LOWLEVEL = 0xff
-    
-    torques = joblib.load('torque.pkl')
-    
-    udp = sdk.UDP(LOWLEVEL, 8080, "192.168.123.10", 8007)
-    safe = sdk.Safety(sdk.LeggedType.Go1)
-    
-    cmd = sdk.LowCmd()
-    state = sdk.LowState()
-    udp.InitCmdData(cmd)
-    
-    motiontime = 0
-    step_idx = 0
-    num_steps = torques.shape[1]
-    
-    while step_idx < num_steps:
-        time.sleep(0.002)
-        motiontime += 1
-        
-        udp.Recv()
-        udp.GetRecv(state)
-        
-        if motiontime >= 500:
-            for joint_idx in range(12):
-                torque = np.clip(torques[joint_idx, step_idx], -5.0, 5.0)
-                cmd.motorCmd[joint_idx].q = PosStopF
-                cmd.motorCmd[joint_idx].dq = VelStopF
-                cmd.motorCmd[joint_idx].Kp = 0
-                cmd.motorCmd[joint_idx].Kd = 0
-                cmd.motorCmd[joint_idx].tau = torque
-            
-            if motiontime % 100 == 0:
-                step_idx += 1
-        
-        if motiontime > 10:
-            safe.PowerProtect(cmd, state, 1)
-        
-        udp.SetSend(cmd)
-        udp.Send()
+MESSAGE = """\
+This legacy Python torque sender is intentionally disabled.
+
+Use the C++ safety-state-machine instead:
+  ./build/go1_lowlevel_experiment --mode remote-preflight \\
+      --duration-s 30 --log remote_preflight.csv
+
+For an offline test on any platform:
+  ./build/go1_lowlevel_experiment --dry-run --mode leg-lift \\
+      --leg auto --lift-height-m 0.02 --tau-overlay-nm 0.10 \\
+      --tau-overlay-hz 0.5 --log /tmp/go1_leg_lift_dry.csv
+
+Analyze a resulting log with:
+  python3 experiment/analyze_lowlevel_log.py /tmp/go1_leg_lift_dry.csv
+
+Follow docs/GO1_LOWLEVEL_EXPERIMENT.md for the staged ground procedure. The
+single-joint pure-torque mode still requires a load-bearing support stand.
+"""
+
+
+if __name__ == "__main__":
+    print(MESSAGE, file=sys.stderr)
+    raise SystemExit(2)

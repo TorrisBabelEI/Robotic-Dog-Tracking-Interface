@@ -1,5 +1,6 @@
 build
 src/__pycache__
+experiment/__pycache__
 experiment/src/__pycache__
 externals/unitree_legged_sdk/lib/python/amd64/**
 .DS_Store

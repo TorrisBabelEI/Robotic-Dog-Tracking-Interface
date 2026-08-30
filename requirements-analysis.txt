@@ -1,0 +1,3 @@
+# Offline Go1 low-level log analysis on the documented Ubuntu 20.04/Python 3.8 setup.
+numpy>=1.21,<2.0
+matplotlib>=3.5,<3.8

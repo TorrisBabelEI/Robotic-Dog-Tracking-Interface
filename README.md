@@ -86,3 +86,29 @@ To run NMPC waypoint tracking with the motion capture system:
 ```
 $ python3 experiment/run_waypoints.py
 ```
+
+Ground low-level experiment
+===========================
+
+The repository includes a conservative 500 Hz C++ experiment runner with
+remote-stop handling, command watchdog, foot kinematics, force/CoP support
+gates, and an offline Python analyzer. Non-Linux systems build a dry-run-only
+executable; Unitree hardware access must be built and run on Linux.
+
+```bash
+cmake -S . -B build
+cmake --build build --target go1_lowlevel_experiment
+
+./build/go1_lowlevel_experiment --dry-run --mode leg-lift \
+  --leg auto --lift-height-m 0.02 --tau-overlay-nm 0.10 \
+  --tau-overlay-hz 0.5 --log /tmp/go1_leg_lift_dry.csv
+
+python3 experiment/analyze_lowlevel_log.py /tmp/go1_leg_lift_dry.csv
+```
+
+The staged ground path is receive-only remote preflight, standing handover,
+squat, one auto-selected leg, then the four-leg sequence. Leg lifting uses
+position impedance plus a small torque overlay; single-joint pure torque still
+requires a load-bearing stand. See
+[docs/GO1_LOWLEVEL_EXPERIMENT.md](docs/GO1_LOWLEVEL_EXPERIMENT.md) for stop
+semantics, safety gates, commands, log schema, and the MOCAP boundary.
