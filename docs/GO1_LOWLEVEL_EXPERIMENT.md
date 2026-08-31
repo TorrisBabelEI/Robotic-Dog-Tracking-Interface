@@ -281,7 +281,7 @@ Once the robot is stable and fully prone, run:
 
 ```bash
 ./build/go1_lowlevel_experiment --mode remote-preflight \
-  --prone-confirmed --duration-s 30 --log remote_preflight.csv
+  --prone-confirmed --duration-s 60 --log remote_preflight.csv
 ```
 
 The program now warns that this mode sends low-level damping and requires the
@@ -315,7 +315,7 @@ L2+B=1
 
 In this preflight mode the chord is logged but deliberately does not trigger a
 second state transition: the program continues sending the same damping
-command until the 30-second test ends. A successful run requires sustained
+command until the 60-second test ends. A successful run requires sustained
 valid `LowState`, a nonzero and numerically plausible remote payload, and at
 least one observed `L2+B`
 chord. It exits with a failure if no valid state arrives within five seconds,
@@ -358,6 +358,20 @@ map stick movements or button chords to factory actions. A PANIC message now
 includes its exact reason, and each remote line includes `level`, `tick`, and
 `ready_issue`; an empty `ready_issue` means that the feedback packet itself
 passes the preflight checks.
+
+The SDK's calf position-command lower limit is `-2.721 rad`, but the tested
+robot's repeatable factory lie-down feedback was `-2.767` to `-2.799 rad` on
+all four calves. The runner therefore accepts up to `0.10 rad` below the SDK
+limit only in confirmed-prone `remote-preflight`, where `q=PosStop`, `Kp=0`,
+and `tau_ff=0`. It does not change `PositionLimit`, IK limits, standing-mode
+feedback limits, or any commanded joint boundary.
+
+One external-Ubuntu Wi-Fi run measured only `339.42 Hz` valid feedback with a
+`142.002 ms` maximum gap. That is a network failure even though the remote
+payload was decoded successfully. Do not proceed to standing takeover on that
+link; repeat the 60-second test on the onboard arm64 computer (or another
+validated low-latency link) and retain the original acceptance criteria of at
+least `450 Hz`, p99 gap at most `10 ms`, and no gap above `20 ms`.
 
 #### Diagnose a zero-feedback preflight
 
@@ -467,6 +481,54 @@ python3 experiment/analyze_lowlevel_log.py \
 If Wi-Fi misses this gate, run the same executable on the onboard arm64
 computer and copy the CSV back to Ubuntu for analysis.
 
+#### Onboard arm64 fallback after a Wi-Fi gate failure
+
+Do not copy the Ubuntu `amd64` executable to the Raspberry Pi. From the Ubuntu
+repository root, copy the source tree and bundled arm64 SDK library while
+excluding host build products:
+
+```bash
+rsync -av \
+  --exclude .git --exclude build --exclude build-arm64 \
+  ./ pi@192.168.12.1:~/Robotic-Dog-Tracking-Interface/
+```
+
+Then build natively over SSH:
+
+```bash
+ssh pi@192.168.12.1
+cd ~/Robotic-Dog-Tracking-Interface
+cmake -S . -B build-arm64 -DPYTHON_BUILD=OFF
+cmake --build build-arm64 --target \
+  go1_lowlevel_experiment go1_kinematics_test -j2
+ctest --test-dir build-arm64 --output-on-failure
+ip route get 192.168.123.10
+```
+
+The route must report the onboard Ethernet path, for example
+`192.168.123.10 dev eth0 src 192.168.123.161`. With Go1 fully prone, run the
+same 60-second preflight on the Pi:
+
+```bash
+./build-arm64/go1_lowlevel_experiment --mode remote-preflight \
+  --prone-confirmed --duration-s 60 \
+  --log remote_preflight_onboard.csv
+```
+
+After it completes, leave the SSH shell and copy only the log back for analysis:
+
+```bash
+exit
+scp pi@192.168.12.1:~/Robotic-Dog-Tracking-Interface/remote_preflight_onboard.csv .
+python3 experiment/analyze_lowlevel_log.py \
+  remote_preflight_onboard.csv --no-plots
+```
+
+SSH still travels over Wi-Fi, but the 500 Hz SDK traffic now stays between the
+onboard process and `192.168.123.10` over Ethernet. Loss of the SSH session is
+not an emergency-stop mechanism; keep the original remote and physical safety
+procedure available throughout the run.
+
 ### 6. Squat and return
 
 After three successful handovers, run:
@@ -548,6 +610,9 @@ also enforces:
   0.3 rad from the captured pose;
 - valid low-level state, finite joint feedback, manufacturer joint bounds,
   temperature below 70 C, and no motor overheat mode;
+- a feedback-only exception of at most 0.10 rad below the calf command limit
+  during confirmed-prone damping preflight; this exception is never used for
+  standing modes or position commands;
 - feedback age no greater than 20 ms;
 - during ground actions, roll/pitch change no greater than 0.10 rad and joint
   speed no greater than 0.8 rad/s;

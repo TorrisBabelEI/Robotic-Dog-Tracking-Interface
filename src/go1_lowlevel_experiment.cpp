@@ -47,6 +47,10 @@ const std::array<const char *, kJointCount> kJointNames = {
     "RR_0", "RR_1", "RR_2", "RL_0", "RL_1", "RL_2"};
 const std::array<float, 3> kJointMin = {-1.047F, -0.663F, -2.721F};
 const std::array<float, 3> kJointMax = {+1.047F, +2.966F, -0.837F};
+// Factory lie-down feedback on the tested Go1 folds all four calves slightly
+// beyond the SDK's position-command limit. This margin is only accepted while
+// the robot is confirmed prone and receiving a position-free damping command.
+constexpr float kProneCalfFeedbackMargin = 0.10F;
 volatile std::sig_atomic_t gSignalCount = 0;
 
 int64_t steadyNowNs() {
@@ -244,7 +248,10 @@ public:
       if (!std::isfinite(joint.q) || !std::isfinite(joint.dq) ||
           !std::isfinite(joint.tauEst))
         return std::string("nonfinite_") + kJointNames[i];
-      if (joint.q < kJointMin[i % 3] || joint.q > kJointMax[i % 3])
+      float feedbackMin = kJointMin[i % 3];
+      if (options_.mode == ExperimentMode::RemotePreflight && i % 3 == 2)
+        feedbackMin -= kProneCalfFeedbackMargin;
+      if (joint.q < feedbackMin || joint.q > kJointMax[i % 3])
         return std::string("joint_limit_") + kJointNames[i];
       if (joint.mode == kOverheatMode)
         return std::string("overheat_mode_") + kJointNames[i];
@@ -1019,7 +1026,10 @@ int runDry(const Options &options) {
   f.remote.valid = true; f.remote.head0 = 0xFE; f.remote.head1 = 0xEF;
   for (std::size_t leg = 0; leg < 4; ++leg) {
     const std::size_t b = leg * 3;
-    f.joint[b].q = 0; f.joint[b + 1].q = 0.8F; f.joint[b + 2].q = -1.5F;
+    f.joint[b].q = 0;
+    f.joint[b + 1].q = 0.8F;
+    f.joint[b + 2].q = options.mode == ExperimentMode::RemotePreflight
+                           ? -2.80F : -1.5F;
     for (std::size_t j = 0; j < 3; ++j) {
       f.joint[b + j].mode = kServoMode; f.joint[b + j].temperature = 30;
     }
@@ -1033,6 +1043,9 @@ int runDry(const Options &options) {
   for (std::size_t cycle = 0; cycle < maxCycles && !core.done(); ++cycle) {
     const double elapsed = cycle * kControlDt;
     updateDryFootForces(core, &f); simulatePlant(command, &f);
+    if (options.mode == ExperimentMode::RemotePreflight)
+      for (std::size_t leg = 0; leg < 4; ++leg)
+        f.joint[leg * 3 + 2].q = -2.80F;
     const int64_t now = start + static_cast<int64_t>(elapsed * 1.0e9);
     if (!soft && options.injectSoftStopS >= 0 && elapsed >= options.injectSoftStopS) {
       soft = true; gSignalCount = 1;
