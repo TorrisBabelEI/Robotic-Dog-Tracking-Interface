@@ -106,9 +106,11 @@ cmake --build build --target go1_lowlevel_experiment
 python3 experiment/analyze_lowlevel_log.py /tmp/go1_leg_lift_dry.csv
 ```
 
-The staged ground path is receive-only remote preflight, standing handover,
-squat, one auto-selected leg, then the four-leg sequence. Leg lifting uses
-position impedance plus a small torque overlay; single-joint pure torque still
-requires a load-bearing stand. See
+The staged ground path is an explicitly confirmed prone-damping remote
+preflight, standing handover, squat, one auto-selected leg, then the four-leg
+sequence. The preflight actively sends zero-torque damping so the SDK/NAT
+return path is established. Leg lifting uses position impedance plus a small
+torque overlay; single-joint pure torque still requires a load-bearing stand.
+See
 [docs/GO1_LOWLEVEL_EXPERIMENT.md](docs/GO1_LOWLEVEL_EXPERIMENT.md) for stop
 semantics, safety gates, commands, log schema, and the MOCAP boundary.

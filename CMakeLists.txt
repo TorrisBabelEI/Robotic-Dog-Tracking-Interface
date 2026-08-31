@@ -141,6 +141,19 @@ if(BUILD_TESTING)
   set_tests_properties(go1_lowlevel_rejects_unconfirmed_preflight
                        PROPERTIES WILL_FAIL TRUE)
   add_test(
+    NAME go1_lowlevel_rejects_unconfirmed_remote_preflight
+    COMMAND go1_lowlevel_experiment --mode remote-preflight
+            --log ${CMAKE_BINARY_DIR}/should_not_exist.csv)
+  set_tests_properties(go1_lowlevel_rejects_unconfirmed_remote_preflight
+                       PROPERTIES WILL_FAIL TRUE)
+  add_test(
+    NAME go1_lowlevel_rejects_remote_without_chord
+    COMMAND go1_lowlevel_experiment --dry-run --mode remote-preflight
+            --duration-s 0.2
+            --log ${CMAKE_BINARY_DIR}/go1_dry_remote_without_chord.csv)
+  set_tests_properties(go1_lowlevel_rejects_remote_without_chord
+                       PROPERTIES WILL_FAIL TRUE)
+  add_test(
     NAME go1_lowlevel_rejects_unconfirmed_leg_lift
     COMMAND go1_lowlevel_experiment --mode leg-lift --ground-confirmed
             --log ${CMAKE_BINARY_DIR}/should_not_exist.csv)

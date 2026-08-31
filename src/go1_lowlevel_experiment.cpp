@@ -142,9 +142,13 @@ struct Options {
   std::string targetIp = "192.168.123.10";
   uint16_t localPort = 8090;
   uint16_t targetPort = 8007;
+  std::string highTargetIp = "192.168.123.161";
+  uint16_t highLocalPort = 8091;
+  uint16_t highTargetPort = 8082;
   bool supportConfirmed = false;
   bool groundConfirmed = false;
   bool remoteConfirmed = false;
+  bool proneConfirmed = false;
   bool dryRun = false;
   double injectSoftStopS = -1.0;
   double injectPanicS = -1.0;
@@ -225,6 +229,13 @@ public:
     return activeLegValid_ ? go1::legIndex(activeLeg_) : -1;
   }
   Command emergencyDampingCommand() const { return dampingCommand(); }
+  void seedGroundPose(const std::array<float, kJointCount> &pose) {
+    precheckQ_ = pose;
+    precheckPoseCaptured_ = true;
+  }
+  Command seededGroundHoldCommand() const {
+    return precheckPoseCaptured_ ? holdCommand(precheckQ_) : dampingCommand();
+  }
 
   void observeSignalCount(int count, int64_t nowNs, const Feedback &feedback) {
     while (handledSignalCount_ < count) {
@@ -278,7 +289,43 @@ public:
     Command command = dampingCommand();
     switch (phase_) {
     case Phase::RemotePreflight:
-      if (phaseElapsedS_ >= options_.durationS) transition(Phase::Complete);
+      if (feedbackReady(feedback, hasState) && recvAlive && tickValid) {
+        if (recvFresh) {
+          ++validPacketStreak_;
+          if (feedback.remote.valid) {
+            remoteEverValid_ = true;
+            const uint16_t required = kRemoteL2Mask | kRemoteBMask;
+            if ((feedback.remote.buttons & required) == required)
+              remoteChordSeen_ = true;
+          }
+        }
+      } else {
+        validPacketStreak_ = 0;
+      }
+      if (validPacketStreak_ >= 25) remoteCommunicationReady_ = true;
+      if (remoteCommunicationReady_ &&
+          (!recvAlive || (recvFresh && !tickValid) ||
+           !feedbackReady(feedback, hasState))) {
+        enterPanic(!recvAlive
+                       ? "remote_preflight_feedback_gap_over_20ms"
+                       : (recvFresh && !tickValid
+                              ? "remote_preflight_tick_invalid"
+                              : "remote_preflight_invalid_lowstate"),
+                   hostNs);
+        panicExitRequested_ = true;
+      } else if (!remoteCommunicationReady_ && phaseElapsedS_ >= 5.0) {
+        enterPanic("remote_preflight_no_lowstate", hostNs);
+        panicExitRequested_ = true;
+      } else if (phaseElapsedS_ >= options_.durationS) {
+        if (!remoteEverValid_ || !remoteChordSeen_) {
+          enterPanic(!remoteEverValid_ ? "remote_data_never_valid"
+                                      : "remote_l2_b_not_seen",
+                     hostNs);
+          panicExitRequested_ = true;
+        } else {
+          transition(Phase::Complete);
+        }
+      }
       break;
     case Phase::Precheck:
       command = precheckCommand(feedback, hasState, recvAlive);
@@ -490,6 +537,8 @@ private:
     }
   }
   Command precheckCommand(const Feedback &f, bool hasState, bool alive) {
+    if (isGroundMode(options_.mode) && precheckPoseCaptured_)
+      return holdCommand(precheckQ_);
     if (isGroundMode(options_.mode) && alive &&
         provisionalGroundPoseReady(f, hasState)) {
       if (!precheckPoseCaptured_) {
@@ -891,6 +940,8 @@ private:
   uint32_t lastStateTick_ = 0;
   bool haveLastStateTick_ = false;
   bool poseCaptured_ = false, precheckPoseCaptured_ = false, failed_ = false;
+  bool remoteCommunicationReady_ = false, remoteEverValid_ = false;
+  bool remoteChordSeen_ = false;
   bool panicExitRequested_ = false;
   int handledSignalCount_ = 0;
   int64_t lastSignalNs_ = 0, stopRequestNs_ = 0, dampingCommandNs_ = 0;
@@ -1025,7 +1076,7 @@ Feedback convertFeedback(const LowState &state) {
   f.remote.head0 = remote.head[0]; f.remote.head1 = remote.head[1];
   f.remote.buttons = remote.btn.value; f.remote.lx = remote.lx; f.remote.ly = remote.ly;
   f.remote.rx = remote.rx; f.remote.ry = remote.ry; f.remote.l2 = remote.L2;
-  f.remote.valid = (remote.head[0] != 0 || remote.head[1] != 0) &&
+  f.remote.valid = remote.head[0] == 0xFE && remote.head[1] == 0xEF &&
       std::isfinite(remote.lx) && std::isfinite(remote.ly) &&
       std::isfinite(remote.rx) && std::isfinite(remote.ry) &&
       std::fabs(remote.lx) <= 1.5F && std::fabs(remote.ly) <= 1.5F &&
@@ -1071,25 +1122,30 @@ public:
     lastCommandPublishNs_.store(steadyNowNs());
   }
   int run() {
-    recvLoop_.start(); controlLoop_.start();
-    bool sendStarted = false;
-    if (options_.mode != ExperimentMode::RemotePreflight) {
-      if (isGroundMode(options_.mode)) {
-        while (!sendReady_.load() && !core_.panicReached() && !core_.done())
-          std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        if (!sendReady_.load()) {
-          std::cerr << "Ground takeover aborted before the first motor packet; "
-                       "no valid hold command became available.\n";
-          finished_.store(true);
-        } else {
-          sendLoop_.start();
-          sendStarted = true;
-        }
-      } else {
-        sendLoop_.start();
-        sendStarted = true;
+    if (isGroundMode(options_.mode)) {
+      std::array<float, kJointCount> standingPose{{0}};
+      if (!captureStandingPoseHighLevel(&standingPose)) {
+        std::cerr << "Ground takeover aborted before low-level transmission: "
+                     "a stable high-level standing pose was not received.\n";
+        core_.forceHardFault("highlevel_standing_pose_capture_failed",
+                             steadyNowNs());
+        if (!core_.writeLog()) return 2;
+        return gSignalCount > 0 ? 130 : 3;
       }
+      core_.seedGroundPose(standingPose);
+      {
+        std::lock_guard<std::mutex> lock(commandMutex_);
+        publishedCommand_ = core_.seededGroundHoldCommand();
+      }
+      lastCommandPublishNs_.store(steadyNowNs());
     }
+
+    // The Unitree SDK examples actively send before expecting state. Starting
+    // the send loop first also creates the return path when Ubuntu reaches the
+    // robot through the onboard computer's NAT.
+    sendLoop_.start();
+    recvLoop_.start();
+    controlLoop_.start();
     bool safeShown = false, panicShown = false;
     while (!finished_.load()) {
       if (core_.safeHoldReached() && !safeShown) {
@@ -1105,7 +1161,7 @@ public:
       std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
     controlLoop_.shutdown();
-    if (sendStarted) sendLoop_.shutdown();
+    sendLoop_.shutdown();
     recvLoop_.shutdown();
     if (!core_.writeLog()) return 2;
     std::cout << "Hardware run complete: samples=" << core_.logCount()
@@ -1113,8 +1169,87 @@ public:
     return core_.failed() ? 3 : 0;
   }
 private:
+  bool captureStandingPoseHighLevel(
+      std::array<float, kJointCount> *standingPose) {
+    if (!standingPose) return false;
+    std::cout << "Capturing the standing pose through the high-level default-"
+                 "stand endpoint before low-level takeover...\n";
+    UDP highUdp(HIGHLEVEL, options_.highLocalPort,
+                options_.highTargetIp.c_str(), options_.highTargetPort);
+    HighCmd command = {};
+    HighState state = {};
+    highUdp.InitCmdData(command);
+    command.mode = 0;       // Idle/default stand; no walking command.
+    command.gaitType = 0;
+    command.speedLevel = 0;
+    command.footRaiseHeight = 0.0F;
+    command.bodyHeight = 0.0F;
+    command.euler = {{0.0F, 0.0F, 0.0F}};
+    command.velocity = {{0.0F, 0.0F}};
+    command.yawSpeed = 0.0F;
+
+    std::array<double, kJointCount> sum{{0}};
+    std::array<float, kJointCount> reference{{0}};
+    int validCount = 0;
+    int64_t lastValidNs = 0;
+    const int requiredCount = 100;
+    const int64_t deadline = steadyNowNs() + 3000000000LL;
+    while (steadyNowNs() < deadline && gSignalCount == 0) {
+      highUdp.SetSend(command);
+      highUdp.Send();
+      const int result = highUdp.Recv();
+      if (result >= 0) {
+        const int64_t now = steadyNowNs();
+        HighState candidate = {};
+        highUdp.GetRecv(candidate);
+        bool valid = candidate.levelFlag == HIGHLEVEL &&
+                     std::isfinite(candidate.imu.rpy[0]) &&
+                     std::isfinite(candidate.imu.rpy[1]) &&
+                     std::fabs(candidate.imu.rpy[0]) <= 0.5F &&
+                     std::fabs(candidate.imu.rpy[1]) <= 0.5F;
+        for (std::size_t i = 0; i < kJointCount && valid; ++i) {
+          const auto &joint = candidate.motorState[i];
+          valid = joint.mode != kOverheatMode && joint.temperature < 70 &&
+                  std::isfinite(joint.q) && std::isfinite(joint.dq) &&
+                  joint.q >= kJointMin[i % 3] &&
+                  joint.q <= kJointMax[i % 3] &&
+                  std::fabs(joint.dq) <= 1.0F;
+        }
+        if (valid && validCount > 0) {
+          valid = now - lastValidNs <= 20000000LL;
+          for (std::size_t i = 0; i < kJointCount && valid; ++i)
+            valid = std::fabs(candidate.motorState[i].q - reference[i]) <= 0.05F;
+        }
+        if (valid) {
+          state = candidate;
+          if (validCount == 0)
+            for (std::size_t i = 0; i < kJointCount; ++i)
+              reference[i] = state.motorState[i].q;
+          lastValidNs = now;
+          for (std::size_t i = 0; i < kJointCount; ++i)
+            sum[i] += state.motorState[i].q;
+          if (++validCount >= requiredCount) {
+            for (std::size_t i = 0; i < kJointCount; ++i)
+              (*standingPose)[i] = static_cast<float>(sum[i] / validCount);
+            std::cout << "Captured " << validCount
+                      << " valid high-level state packets; switching to a "
+                         "low-level impedance hold at the measured pose.\n";
+            return true;
+          }
+        } else {
+          validCount = 0;
+          lastValidNs = 0;
+          sum.fill(0.0);
+        }
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    return false;
+  }
   void recvStep() {
-    recvResult_.store(udp_.Recv());
+    const int result = udp_.Recv();
+    recvResult_.store(result);
+    if (result < 0) return;
     LowState candidate = {}; udp_.GetRecv(candidate);
     if (!hasState_.load() || candidate.tick != recvThreadLastTick_) {
       recvThreadLastTick_ = candidate.tick;
@@ -1153,6 +1288,11 @@ private:
                 << " lx=" << f.remote.lx << " ly=" << f.remote.ly
                 << " rx=" << f.remote.rx << " ry=" << f.remote.ry
                 << " L2=" << f.remote.l2 << '\n';
+    } else if (options_.mode == ExperimentMode::RemotePreflight && !hasState &&
+               now - lastNoStatePrintNs_ >= 1000000000LL) {
+      lastNoStatePrintNs_ = now;
+      std::cout << "waiting for valid LowState; recv_result="
+                << recvResult_.load() << " damping_stream=active\n";
     }
     core_.observeSignalCount(static_cast<int>(gSignalCount), now, f);
     const int64_t lastRecv = lastRecvNs_.load();
@@ -1160,28 +1300,18 @@ private:
     Command command = core_.step(
         f, hasState, fresh, alive, recvResult_.load(), sendResult_.load(),
         loopUs, now, watchdogActive_.load());
-    if (options_.mode != ExperimentMode::RemotePreflight) {
-      copyCommand(command, &safetyPacket_);
-      safety_.PositionLimit(safetyPacket_);
-      if (hasState) {
-        if (safety_.PowerProtect(safetyPacket_, state, 1) < 0) {
-          core_.forceHardFault("power_protect", now);
-          copyCommand(core_.emergencyDampingCommand(), &safetyPacket_);
-        }
-      }
-      command = convertCommand(safetyPacket_);
-      core_.amendLastLoggedCommand(command, watchdogActive_.load());
-      { std::lock_guard<std::mutex> lock(commandMutex_); publishedCommand_ = command; }
-      lastCommandPublishNs_.store(now);
-      if (isGroundMode(options_.mode) && hasState &&
-          (!isLegMode(options_.mode) || f.remote.valid)) {
-        bool impedanceHold = true;
-        for (const auto &joint : command.joint)
-          impedanceHold = impedanceHold && joint.mode == kServoMode &&
-                          joint.q < 1.0e8F && std::isfinite(joint.q);
-        if (impedanceHold) sendReady_.store(true);
+    copyCommand(command, &safetyPacket_);
+    safety_.PositionLimit(safetyPacket_);
+    if (hasState) {
+      if (safety_.PowerProtect(safetyPacket_, state, 1) < 0) {
+        core_.forceHardFault("power_protect", now);
+        copyCommand(core_.emergencyDampingCommand(), &safetyPacket_);
       }
     }
+    command = convertCommand(safetyPacket_);
+    core_.amendLastLoggedCommand(command, watchdogActive_.load());
+    { std::lock_guard<std::mutex> lock(commandMutex_); publishedCommand_ = command; }
+    lastCommandPublishNs_.store(now);
     if (core_.done()) finished_.store(true);
   }
   bool shouldPrintRemote(const Feedback &f, int64_t now) {
@@ -1198,12 +1328,12 @@ private:
   Feedback feedback_; Command publishedCommand_;
   std::mutex stateMutex_, commandMutex_;
   std::atomic<bool> hasState_{false}, watchdogActive_{false}, finished_{false};
-  std::atomic<bool> sendReady_{false};
   std::atomic<uint64_t> stateSequence_{0};
   std::atomic<int64_t> lastRecvNs_{0}, lastCommandPublishNs_{0};
   std::atomic<int> recvResult_{0}, sendResult_{0};
   uint64_t controlLastSequence_ = 0; uint32_t recvThreadLastTick_ = 0;
   int64_t lastControlNs_ = 0, lastRemotePrintNs_ = 0;
+  int64_t lastNoStatePrintNs_ = 0;
   uint16_t lastRemoteButtons_ = 0;
   bool lastRemoteValid_ = false;
   LoopFunc controlLoop_, sendLoop_, recvLoop_;
@@ -1234,8 +1364,11 @@ void printUsage(const char *program) {
       << "  --tau-overlay-nm 0.10\n  --tau-overlay-hz 0.5\n"
       << "  --joint FR_1\n  --amplitude-nm 0.2\n  --frequency-hz 0.5\n"
       << "  --duration-s 10\n  --log PATH\n  --support-confirmed\n"
-      << "  --ground-confirmed\n  --remote-confirmed\n  --dry-run\n"
-      << "  --target-ip ADDRESS\n  --local-port PORT\n  --target-port PORT\n";
+      << "  --ground-confirmed\n  --remote-confirmed\n  --prone-confirmed\n"
+      << "  --dry-run\n"
+      << "  --target-ip ADDRESS\n  --local-port PORT\n  --target-port PORT\n"
+      << "  --high-target-ip ADDRESS\n  --high-local-port PORT\n"
+      << "  --high-target-port PORT\n";
 }
 Options parseOptions(int argc, char **argv) {
   Options o;
@@ -1271,14 +1404,20 @@ Options parseOptions(int argc, char **argv) {
     else if (arg == "--duration-s") o.durationS = parseDouble(arg, value(arg));
     else if (arg == "--log") o.logPath = value(arg);
     else if (arg == "--target-ip") o.targetIp = value(arg);
-    else if (arg == "--local-port" || arg == "--target-port") {
+    else if (arg == "--high-target-ip") o.highTargetIp = value(arg);
+    else if (arg == "--local-port" || arg == "--target-port" ||
+             arg == "--high-local-port" || arg == "--high-target-port") {
       const int port = parseInt(arg, value(arg));
       if (port < 1 || port > 65535) throw std::runtime_error(arg + " must be 1..65535");
       if (arg == "--local-port") o.localPort = static_cast<uint16_t>(port);
-      else o.targetPort = static_cast<uint16_t>(port);
+      else if (arg == "--target-port") o.targetPort = static_cast<uint16_t>(port);
+      else if (arg == "--high-local-port")
+        o.highLocalPort = static_cast<uint16_t>(port);
+      else o.highTargetPort = static_cast<uint16_t>(port);
     } else if (arg == "--support-confirmed") o.supportConfirmed = true;
     else if (arg == "--ground-confirmed") o.groundConfirmed = true;
     else if (arg == "--remote-confirmed") o.remoteConfirmed = true;
+    else if (arg == "--prone-confirmed") o.proneConfirmed = true;
     else if (arg == "--dry-run") o.dryRun = true;
     else if (arg == "--inject-soft-stop-s") o.injectSoftStopS = parseDouble(arg, value(arg));
     else if (arg == "--inject-panic-s") o.injectPanicS = parseDouble(arg, value(arg));
@@ -1293,6 +1432,13 @@ Options parseOptions(int argc, char **argv) {
   if (o.tauOverlayNm < 0 || o.tauOverlayNm > 0.2) throw std::runtime_error("--tau-overlay-nm must be in [0, 0.2]");
   if (o.tauOverlayHz < 0.1 || o.tauOverlayHz > 3) throw std::runtime_error("--tau-overlay-hz must be in [0.1, 3]");
   if (o.supportConfirmed && o.groundConfirmed) throw std::runtime_error("support and ground confirmations are mutually exclusive");
+  if (o.proneConfirmed && o.mode != ExperimentMode::RemotePreflight)
+    throw std::runtime_error("--prone-confirmed is only valid with remote-preflight");
+  if (!o.dryRun && o.mode == ExperimentMode::RemotePreflight &&
+      !o.proneConfirmed)
+    throw std::runtime_error("remote-preflight hardware mode requires --prone-confirmed");
+  if (o.localPort == o.highLocalPort)
+    throw std::runtime_error("low-level and high-level local UDP ports must differ");
   if (!o.dryRun && (o.mode == ExperimentMode::Preflight || o.mode == ExperimentMode::TorqueSine) && !o.supportConfirmed)
     throw std::runtime_error("supported hardware mode requires --support-confirmed");
   if (!o.dryRun && isGroundMode(o.mode) && !o.groundConfirmed)
@@ -1326,7 +1472,18 @@ int main(int argc, char **argv) {
       if (!std::getline(std::cin, confirmation) || confirmation != "ARM" || gSignalCount > 0) {
         std::cerr << "Not armed; no hardware packets were sent.\n"; return 130;
       }
-    } else std::cout << "Remote preflight is receive-only; no motor commands will be sent.\n";
+    } else {
+      std::cout <<
+          "WARNING: remote-preflight actively sends low-level damping to all "
+          "joints.\nThe robot must already be fully prone with nobody near the "
+          "legs.\nType ARM DAMPING and press Enter to continue: " << std::flush;
+      std::string confirmation;
+      if (!std::getline(std::cin, confirmation) ||
+          confirmation != "ARM DAMPING" || gSignalCount > 0) {
+        std::cerr << "Not armed; no hardware packets were sent.\n";
+        return 130;
+      }
+    }
     HardwareRunner runner(options); return runner.run();
 #else
     std::cerr << "This build is dry-run-only. Rebuild on Ubuntu/Go1 for hardware access.\n";

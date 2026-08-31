@@ -221,6 +221,19 @@ def network_metrics(
 
     temperatures = np.concatenate([data[f"{joint}_temperature"] for joint in JOINTS])
     speeds = np.concatenate([data[f"{joint}_state_dq"] for joint in JOINTS])
+    remote_valid_ratio = math.nan
+    remote_l2_b_seen = math.nan
+    if "remote_valid" in data and "remote_buttons" in data:
+        fresh_count = int(np.count_nonzero(recv_mask))
+        if fresh_count:
+            remote_valid = data["remote_valid"] > 0.5
+            remote_valid_ratio = float(np.count_nonzero(recv_mask & remote_valid) /
+                                       fresh_count)
+            buttons = np.nan_to_num(data["remote_buttons"], nan=0.0).astype(np.int64)
+            required = (1 << 5) | (1 << 9)
+            remote_l2_b_seen = float(np.any(
+                recv_mask & remote_valid & ((buttons & required) == required)
+            ))
     return {
         "samples": float(host_s.size),
         "elapsed_s": elapsed,
@@ -239,6 +252,8 @@ def network_metrics(
         "imu_pitch_excursion_rad": pitch_excursion,
         "max_motor_temperature_c": float(np.nanmax(temperatures)),
         "max_abs_joint_speed_rad_s": float(np.nanmax(np.abs(speeds))),
+        "remote_valid_fresh_ratio": remote_valid_ratio,
+        "remote_l2_b_seen": remote_l2_b_seen,
     }
 
 
@@ -399,6 +414,8 @@ def write_summary(
         "imu_pitch_excursion_rad",
         "max_motor_temperature_c",
         "max_abs_joint_speed_rad_s",
+        "remote_valid_fresh_ratio",
+        "remote_l2_b_seen",
         "min_active_support_margin_m",
         "min_airborne_force_ratio",
         "final_contact_force_ratio",
@@ -570,7 +587,7 @@ def main() -> int:
     sample_dt_s = float(np.median(finite_gaps)) if finite_gaps.size else 0.002
     action_mask = np.isin(data["phase"], ACTION_PHASES)
     if not np.any(action_mask):
-        # Receive-only remote preflight has no motor-action phase. Retain its
+        # Prone-damping remote preflight has no motion-action phase. Retain its
         # timing and remote diagnostics while leaving motion metrics as NaN.
         action_mask = np.zeros(data["phase"].shape, dtype=bool)
 
@@ -603,6 +620,11 @@ def main() -> int:
         f"pitch_excursion={network['imu_pitch_excursion_rad']:.4f} rad, "
         f"max_joint_speed={network['max_abs_joint_speed_rad_s']:.4f} rad/s, "
         f"max_temperature={network['max_motor_temperature_c']:.1f} C"
+    )
+    print(
+        "remote: "
+        f"valid_fresh_ratio={network['remote_valid_fresh_ratio']:.3f}, "
+        f"L2+B_seen={network['remote_l2_b_seen']:.0f}"
     )
     print(
         "support: "

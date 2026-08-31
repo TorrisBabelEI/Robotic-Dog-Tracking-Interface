@@ -21,16 +21,19 @@ starting this runner.
 
 The intended ground sequence is deliberately gated:
 
-1. remote receive-only preflight with the robot prone or already in damping;
+1. active low-level damping and remote-input preflight with the robot fully
+   prone;
 2. standing low-level handover and hold;
 3. symmetric squat and return;
 4. one automatically selected leg lift;
 5. all four legs, with a new force baseline before each leg.
 
 `--ground-confirmed` acknowledges that the robot is on clear, level ground.
-`--remote-confirmed` acknowledges that `L2+B` was seen during the receive-only
-preflight. Both flags are required for hardware leg-lift modes. `--dry-run`
-opens no UDP socket and needs no confirmation flags.
+`--remote-confirmed` acknowledges that valid low-level remote data and `L2+B`
+were seen during the prone-damping preflight. Both flags are required for
+hardware leg-lift modes. `remote-preflight` additionally requires
+`--prone-confirmed`; it actively sends damping commands and is not a passive
+listener. `--dry-run` opens no UDP socket and needs no confirmation flags.
 
 Single-joint pure torque remains available only for a genuinely load-bearing
 stand using `--mode torque-sine --support-confirmed`. The ground leg lift uses
@@ -91,8 +94,9 @@ computer.
 
 ### 0. Current exit limitation: read before a ground run
 
-The receive-only remote preflight can be performed immediately with the robot
-prone. The current low-level program does **not** provide a normal hand-back to
+The remote preflight can be performed with the robot fully prone because it
+actively sends low-level damping. The current low-level program does **not**
+provide a normal hand-back to
 Unitree's high-level controller or an automatic lie-down-and-exit action.
 After any command-sending mode completes, it continues holding the captured
 four-foot standing pose.
@@ -142,6 +146,8 @@ The verified laboratory topology is:
 | Go1 Raspberry Pi `eth0` | `192.168.123.161` | Robot internal network |
 | Go1 low-level controller | `192.168.123.10:8007` | SDK command/state endpoint |
 | Ubuntu low-level UDP port | `8090` | Local SDK socket |
+| Go1 high-level controller | `192.168.123.161:8082` | Standing-pose capture endpoint |
+| Ubuntu high-level UDP port | `8091` | Temporary pose-capture socket |
 
 Do **not** use the old global-route command:
 
@@ -168,6 +174,7 @@ the network. Verify both destinations before every experiment:
 ip -br addr
 ip route get 192.168.12.1
 ip route get 192.168.123.10
+ip route get 192.168.123.161
 ip route get 192.168.1.122
 ```
 
@@ -175,6 +182,7 @@ The important results should resemble:
 
 ```text
 192.168.123.10 via 192.168.12.1 dev wlp0s20f3 src 192.168.12.20
+192.168.123.161 via 192.168.12.1 dev wlp0s20f3 src 192.168.12.20
 192.168.1.122 dev enp0s31f6 src 192.168.1.167
 ```
 
@@ -257,7 +265,7 @@ Do not lift or carry the robot after it is powered on. If it does not stand,
 only makes abnormal sounds, kicks its legs, or otherwise fails the self-test,
 stop here. Do not compensate by increasing controller gains or torque.
 
-### 3. First run: receive-only remote preflight
+### 3. First run: prone-damping remote preflight
 
 Before starting the program, use the original remote to put the robot down.
 Starting from quiet static standing, hold `L2` and press `A` three times. Wait
@@ -265,40 +273,75 @@ while Go1 squats, stands, and then lies prone. The manual's complete shutdown
 sequence subsequently uses `L2` held while `B` is pressed twice to pass through
 prone damping and prone undamped states.
 
-Once the robot is stable and prone, run:
+If this factory-controlled lie-down works before the program starts, the
+remote hardware and its normal radio path are functioning. That check is
+separate from verifying whether `LowState.wirelessRemote` reaches Ubuntu.
+
+Once the robot is stable and fully prone, run:
 
 ```bash
 ./build/go1_lowlevel_experiment --mode remote-preflight \
-  --duration-s 30 --log remote_preflight.csv
+  --prone-confirmed --duration-s 30 --log remote_preflight.csv
 ```
 
-This mode receives `LowState` and writes a log, but never sends a motor command.
-Move the sticks and press buttons while watching the terminal. Confirm that it
-prints:
+The program now warns that this mode sends low-level damping and requires the
+operator to type exactly:
+
+```text
+ARM DAMPING
+```
+
+After that confirmation, it sends all 12 joints
+`mode=Damping`, `q=PosStop`, `Kp=0`, `Kd=1`, and `tau_ff=0` at 500 Hz. Sending
+is necessary because the official low-level SDK pattern actively sends and
+receives, and it creates the UDP return path through the Raspberry Pi NAT.
+This is why the robot must already be prone; never run this preflight while it
+is standing unsupported.
+
+Move the sticks and press buttons while watching the terminal. The robot is
+now owned by the low-level damping session, so factory walking, standing, and
+lie-down actions are **not expected to execute**. The intended observation is
+terminal data changing, not robot motion. Confirm that it prints:
 
 ```text
 remote valid=1
 ```
 
-For a clean factory shutdown sequence, keep `L2` held and press `B` once while
-watching the terminal. Confirm:
+Keep `L2` held and press `B` while watching the terminal. Confirm:
 
 ```text
 L2+B=1
 ```
 
-The factory controller still receives the remote even though this program is
-receive-only. Keep Go1 flat on the floor, then press `B` a second time while
-continuing to hold `L2`; this completes the manual's two `L2+B` transitions and
-leaves the robot prone and undamped. Then inspect the log:
+In this preflight mode the chord is logged but deliberately does not trigger a
+second state transition: the program continues sending the same damping
+command until the 30-second test ends. A successful run requires sustained
+valid `LowState`, a valid remote header, and at least one observed `L2+B`
+chord. It exits with a failure if no valid state arrives within five seconds,
+if feedback later stops for more than 20 ms, or if no valid remote/chord is
+seen. Then inspect the log:
+
+While no state has arrived, the terminal prints once per second:
+
+```text
+waiting for valid LowState; recv_result=-1 damping_stream=active
+```
+
+This means outbound damping is active but no valid reply has yet been
+accepted; it is not a remote-validity result.
 
 ```bash
 python3 experiment/analyze_lowlevel_log.py \
   remote_preflight.csv --no-plots
 ```
 
-If `remote valid=1` and `L2+B=1` are not both observed reliably, do not run
-`leg-lift` or `leg-lift-sequence`.
+The analyzer now reports the remote gate explicitly. A successful preflight
+should end with `remote_valid_fresh_ratio` close to `1.0` and
+`L2+B_seen=1`, in addition to an acceptable feedback rate and packet-gap
+distribution.
+
+If `remote valid=1` and `L2+B=1` are not both observed reliably, do not pass
+`--remote-confirmed` and do not run `leg-lift` or `leg-lift-sequence`.
 
 #### Diagnose a zero-feedback preflight
 
@@ -315,7 +358,7 @@ Inspect the state tick, fresh-receive flag, and raw `UDP::Recv()` result:
 cut -d, -f2,4,5 remote_preflight.csv | sort | uniq -c | head -20
 ```
 
-The observed failed run produced approximately:
+The historical receive-only run produced approximately:
 
 ```text
 15023 0,0,-1
@@ -323,41 +366,41 @@ The observed failed run produced approximately:
 ```
 
 `state_tick_ms=0`, `recv_ok=0`, and `recv_result=-1` mean that every receive
-attempt returned without a packet. The single `recv_ok=1` row is a known
-initialization artifact in the current runner: the first zero-filled state was
-incorrectly counted as fresh. It is not evidence of communication.
+attempt returned without a packet. The old single `recv_ok=1` row was an
+initialization bug: the runner counted a zero-filled buffer even though
+`UDP::Recv()` returned `-1`. This is fixed; the current runner calls
+`GetRecv()` only after a non-negative receive result.
 
-First re-check that `192.168.123.10` uses the Wi-Fi-specific route above. If
-the route is correct but feedback remains at 0 Hz, stop the experiment. The
-current `remote-preflight` opens a connected UDP socket but intentionally sends
-no packet. Across the Raspberry Pi NAT, that may fail to create a return path;
-the Unitree low-level endpoint may also return state only to a client that is
-actively sending valid packets. Unitree's
+First re-check that `192.168.123.10` uses the Wi-Fi-specific route above. The
+current preflight actively sends damping, matching Unitree's
 [native joystick example](https://github.com/unitreerobotics/unitree_legged_sdk/blob/go1/example/example_joystick.cpp)
-starts both send and receive loops, so receive-only behavior is not established
-by an official example.
+which starts both send and receive loops. If feedback still remains at 0 Hz,
+the issue is no longer explained by a missing NAT session; stop and inspect
+traffic and endpoint availability rather than increasing gains or torque.
 
-To observe traffic without transmitting an additional test command, run this
-in one terminal while repeating only `remote-preflight` in another:
+To observe the preflight traffic, run this in one terminal while repeating it
+in another:
 
 ```bash
 sudo timeout 15 tcpdump -ni any \
   'host 192.168.123.10 and (udp port 8007 or udp port 8090)'
 ```
 
-Do not use `ground-handover`, increase torque, or run Unitree's low-level
-joystick example free-standing to work around 0 Hz feedback. The software must
-first be revised and reviewed to use an explicitly confirmed prone-damping
-probe, or another validated remote-state source.
+The capture should show outbound UDP to port `8007` and return packets to local
+port `8090`. If only outbound traffic appears, verify NAT/firewall state and
+that no competing controller owns the endpoint. Do not use `ground-handover`,
+increase torque, or run Unitree's low-level joystick example free-standing to
+work around 0 Hz feedback.
 
 ### 4. Shut down after preflight, then restart for standing tests
 
-The program exits automatically after the preflight duration. If the two
-`L2+B` presses above were completed from the prone state, Go1 should now be
-prone and undamped. Do not guess: if the state is uncertain, follow the manual
-and verify the prone undamped state before touching the battery. Only then
-switch off the battery by pressing the battery button once and then holding it
-for more than two seconds. All battery indicators should turn off.
+The program exits automatically after the preflight duration and stops sending
+the low-level damping stream. The test robot must still be physically prone;
+verify that it is flat and that no leg is driving before touching the battery.
+Because the body is supported by the floor, it can then be switched off using
+the normal short-press-then-long-press battery sequence. Do not assume that a
+button chord pressed during low-level preflight executed the corresponding
+factory high-level action; it was only observed and logged by this program.
 
 To prepare for a standing experiment, return the legs to the normal startup
 configuration and repeat Sections 1 and 2. Let Go1 complete its self-test and
@@ -379,12 +422,22 @@ The program displays a warning and requires the operator to type exactly:
 ARM
 ```
 
-No command is sent before this confirmation. In a ground mode, the UDP send
-loop also stays off until the program has received a complete finite, in-range
-joint state and constructed a hold command from it. The first transmitted
-packet is therefore the measured standing-pose hold, not the default damping
-packet. The program captures and holds that pose for 10 seconds, then remains
-in four-foot hold because of the exit limitation above.
+No command is sent before this confirmation. The runner then temporarily uses
+Unitree's high-level endpoint (`192.168.123.161:8082`, local port `8091`) to
+send `mode=0` idle/default-stand commands while capturing 100 stable state
+packets. Packets must stay within 20 ms of one another, all joint feedback must
+be finite and in range, joint speed must stay below 1 rad/s, and each joint
+must remain within 0.05 rad of the initial candidate pose. If this three-second
+capture fails, no low-level packet is sent.
+
+After a valid standing pose is captured, the runner starts its low-level send
+loop first and uses that measured pose for the first impedance-hold packet. It
+does not use a default damping packet for standing takeover. The low-level
+precheck still requires 250 valid packets before an action is enabled. The
+program holds the pose for 10 seconds, then remains in four-foot hold because
+of the exit limitation above. The high-level endpoint and ports can be changed
+with `--high-target-ip`, `--high-target-port`, and `--high-local-port` only if
+the robot configuration is known to differ.
 
 Complete three handover trials before enabling an action. Review each log for
 an average valid-feedback rate of at least 450 Hz, p99 packet gap below 10 ms,
