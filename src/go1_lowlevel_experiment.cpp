@@ -236,6 +236,28 @@ public:
   Command seededGroundHoldCommand() const {
     return precheckPoseCaptured_ ? holdCommand(precheckQ_) : dampingCommand();
   }
+  std::string feedbackReadinessIssue(const Feedback &f, bool hasState) const {
+    if (!hasState) return "no_state";
+    if (f.levelFlag != kLowLevel) return "level_flag_not_lowlevel";
+    for (std::size_t i = 0; i < kJointCount; ++i) {
+      const auto &joint = f.joint[i];
+      if (!std::isfinite(joint.q) || !std::isfinite(joint.dq) ||
+          !std::isfinite(joint.tauEst))
+        return std::string("nonfinite_") + kJointNames[i];
+      if (joint.q < kJointMin[i % 3] || joint.q > kJointMax[i % 3])
+        return std::string("joint_limit_") + kJointNames[i];
+      if (joint.mode == kOverheatMode)
+        return std::string("overheat_mode_") + kJointNames[i];
+      if (joint.temperature >= 70)
+        return std::string("temperature_") + kJointNames[i];
+      if (isGroundMode(options_.mode) && std::fabs(joint.dq) > 1.0)
+        return std::string("ground_speed_") + kJointNames[i];
+    }
+    if (isLegMode(options_.mode) &&
+        ((!options_.dryRun && !options_.remoteConfirmed) || !f.remote.valid))
+      return "remote_not_valid_for_leg_mode";
+    return "";
+  }
 
   void observeSignalCount(int count, int64_t nowNs, const Feedback &feedback) {
     while (handledSignalCount_ < count) {
@@ -314,7 +336,10 @@ public:
                    hostNs);
         panicExitRequested_ = true;
       } else if (!remoteCommunicationReady_ && phaseElapsedS_ >= 5.0) {
-        enterPanic("remote_preflight_no_lowstate", hostNs);
+        const std::string issue = feedbackReadinessIssue(feedback, hasState);
+        enterPanic(std::string("remote_preflight_") +
+                       (issue.empty() ? "insufficient_packet_streak" : issue),
+                   hostNs);
         panicExitRequested_ = true;
       } else if (phaseElapsedS_ >= options_.durationS) {
         if (!remoteEverValid_ || !remoteChordSeen_) {
@@ -420,7 +445,7 @@ public:
            "loop_dt_us,watchdog_active,abort_reason,stop_source,"
            "stop_request_ns,damping_command_ns,active_leg,remote_valid,"
            "remote_head0,remote_head1,remote_buttons,remote_lx,remote_ly,"
-           "remote_rx,remote_ry,remote_l2,imu_roll,imu_pitch,imu_yaw,"
+           "remote_rx,remote_ry,remote_l2,level_flag,imu_roll,imu_pitch,imu_yaw,"
            "gyro_x,gyro_y,gyro_z,accel_x,accel_y,accel_z,cop_valid,"
            "cop_x_m,cop_y_m,total_foot_force";
     for (std::size_t leg = 0; leg < 4; ++leg)
@@ -464,16 +489,7 @@ private:
     return true;
   }
   bool feedbackReady(const Feedback &f, bool hasState) const {
-    if (!hasState || f.levelFlag != kLowLevel || !feedbackFiniteAndInBounds(f))
-      return false;
-    if (isLegMode(options_.mode) &&
-        ((!options_.dryRun && !options_.remoteConfirmed) || !f.remote.valid))
-      return false;
-    for (const auto &j : f.joint) {
-      if (j.mode == kOverheatMode || j.temperature >= 70) return false;
-      if (isGroundMode(options_.mode) && std::fabs(j.dq) > 1.0) return false;
-    }
-    return true;
+    return feedbackReadinessIssue(f, hasState).empty();
   }
   bool provisionalGroundPoseReady(const Feedback &f, bool hasState) const {
     if (!hasState || !feedbackFiniteAndInBounds(f)) return false;
@@ -903,7 +919,8 @@ private:
         << ',' << legName << ',' << (r.valid ? 1 : 0) << ','
         << static_cast<int>(r.head0) << ',' << static_cast<int>(r.head1) << ','
         << r.buttons << ',' << r.lx << ',' << r.ly << ',' << r.rx << ','
-        << r.ry << ',' << r.l2 << ',' << s.feedback.rpy[0] << ','
+        << r.ry << ',' << r.l2 << ',' << static_cast<int>(s.feedback.levelFlag)
+        << ',' << s.feedback.rpy[0] << ','
         << s.feedback.rpy[1] << ',' << s.feedback.rpy[2] << ','
         << s.feedback.gyro[0] << ',' << s.feedback.gyro[1] << ','
         << s.feedback.gyro[2] << ',' << s.feedback.accel[0] << ','
@@ -1076,7 +1093,14 @@ Feedback convertFeedback(const LowState &state) {
   f.remote.head0 = remote.head[0]; f.remote.head1 = remote.head[1];
   f.remote.buttons = remote.btn.value; f.remote.lx = remote.lx; f.remote.ly = remote.ly;
   f.remote.rx = remote.rx; f.remote.ry = remote.ry; f.remote.l2 = remote.L2;
-  f.remote.valid = remote.head[0] == 0xFE && remote.head[1] == 0xEF &&
+  const bool payloadNonzero = std::any_of(
+      state.wirelessRemote.begin(), state.wirelessRemote.end(),
+      [](uint8_t value) { return value != 0; });
+  // The SDK does not document a required value for the first two joystick
+  // bytes, and its own example does not validate them. Some Go1 firmware
+  // leaves them at values other than FE EF, so validate the payload and
+  // decoded ranges instead.
+  f.remote.valid = payloadNonzero &&
       std::isfinite(remote.lx) && std::isfinite(remote.ly) &&
       std::isfinite(remote.rx) && std::isfinite(remote.ry) &&
       std::fabs(remote.lx) <= 1.5F && std::fabs(remote.ly) <= 1.5F &&
@@ -1155,8 +1179,14 @@ public:
       }
       if (core_.panicReached() && !panicShown) {
         panicShown = true;
-        std::cerr << "PANIC DAMPING ACTIVE. Keep clear. When safe, press Ctrl-C "
-                     "once to close UDP and write the log.\n";
+        std::cerr << "PANIC DAMPING ACTIVE: " << core_.faultReason()
+                  << ". Keep clear.";
+        if (options_.mode == ExperimentMode::RemotePreflight)
+          std::cerr << " The prone preflight will close automatically after "
+                       "its damping window.\n";
+        else
+          std::cerr << " When safe, press Ctrl-C once to close UDP and write "
+                       "the log.\n";
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
@@ -1287,7 +1317,13 @@ private:
                 << (((f.remote.buttons & required) == required) ? 1 : 0)
                 << " lx=" << f.remote.lx << " ly=" << f.remote.ly
                 << " rx=" << f.remote.rx << " ry=" << f.remote.ry
-                << " L2=" << f.remote.l2 << '\n';
+                << " L2=" << f.remote.l2
+                << " head=0x" << std::hex << static_cast<int>(f.remote.head0)
+                << static_cast<int>(f.remote.head1)
+                << " level=0x" << static_cast<int>(f.levelFlag) << std::dec
+                << " tick=" << f.tickMs
+                << " ready_issue="
+                << core_.feedbackReadinessIssue(f, hasState) << '\n';
     } else if (options_.mode == ExperimentMode::RemotePreflight && !hasState &&
                now - lastNoStatePrintNs_ >= 1000000000LL) {
       lastNoStatePrintNs_ = now;

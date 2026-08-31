@@ -316,7 +316,8 @@ L2+B=1
 In this preflight mode the chord is logged but deliberately does not trigger a
 second state transition: the program continues sending the same damping
 command until the 30-second test ends. A successful run requires sustained
-valid `LowState`, a valid remote header, and at least one observed `L2+B`
+valid `LowState`, a nonzero and numerically plausible remote payload, and at
+least one observed `L2+B`
 chord. It exits with a failure if no valid state arrives within five seconds,
 if feedback later stops for more than 20 ms, or if no valid remote/chord is
 seen. Then inspect the log:
@@ -337,11 +338,26 @@ python3 experiment/analyze_lowlevel_log.py \
 
 The analyzer now reports the remote gate explicitly. A successful preflight
 should end with `remote_valid_fresh_ratio` close to `1.0` and
-`L2+B_seen=1`, in addition to an acceptable feedback rate and packet-gap
-distribution.
+`L2+B_seen=1`, and `lowlevel_fresh_ratio` close to `1.0`, in addition to an
+acceptable feedback rate and packet-gap distribution.
 
 If `remote valid=1` and `L2+B=1` are not both observed reliably, do not pass
 `--remote-confirmed` and do not run `leg-lift` or `leg-lift-sequence`.
+
+Unitree's SDK does not document a required value for the two leading bytes in
+its joystick structure, and the official example does not validate them. An
+earlier revision incorrectly required them to equal `FE EF`, which could print
+`remote valid=0` even while `buttons=0x220` and the stick values visibly
+changed. The current revision treats a nonzero payload with finite in-range
+decoded axes as valid and prints the leading bytes only as a diagnostic. In
+particular, `buttons=0x220` is direct evidence that Ubuntu received `L2+B`.
+
+It is normal to hear the motors engage when the damping stream begins without
+seeing a commanded motion. This mode changes damping ownership but does not
+map stick movements or button chords to factory actions. A PANIC message now
+includes its exact reason, and each remote line includes `level`, `tick`, and
+`ready_issue`; an empty `ready_issue` means that the feedback packet itself
+passes the preflight checks.
 
 #### Diagnose a zero-feedback preflight
 

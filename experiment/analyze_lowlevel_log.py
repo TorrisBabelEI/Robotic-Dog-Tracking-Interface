@@ -223,8 +223,13 @@ def network_metrics(
     speeds = np.concatenate([data[f"{joint}_state_dq"] for joint in JOINTS])
     remote_valid_ratio = math.nan
     remote_l2_b_seen = math.nan
+    lowlevel_fresh_ratio = math.nan
+    fresh_count = int(np.count_nonzero(recv_mask))
+    if "level_flag" in data and fresh_count:
+        lowlevel_fresh_ratio = float(np.count_nonzero(
+            recv_mask & (data["level_flag"] == 0xFF)
+        ) / fresh_count)
     if "remote_valid" in data and "remote_buttons" in data:
-        fresh_count = int(np.count_nonzero(recv_mask))
         if fresh_count:
             remote_valid = data["remote_valid"] > 0.5
             remote_valid_ratio = float(np.count_nonzero(recv_mask & remote_valid) /
@@ -254,6 +259,7 @@ def network_metrics(
         "max_abs_joint_speed_rad_s": float(np.nanmax(np.abs(speeds))),
         "remote_valid_fresh_ratio": remote_valid_ratio,
         "remote_l2_b_seen": remote_l2_b_seen,
+        "lowlevel_fresh_ratio": lowlevel_fresh_ratio,
     }
 
 
@@ -416,6 +422,7 @@ def write_summary(
         "max_abs_joint_speed_rad_s",
         "remote_valid_fresh_ratio",
         "remote_l2_b_seen",
+        "lowlevel_fresh_ratio",
         "min_active_support_margin_m",
         "min_airborne_force_ratio",
         "final_contact_force_ratio",
@@ -624,7 +631,8 @@ def main() -> int:
     print(
         "remote: "
         f"valid_fresh_ratio={network['remote_valid_fresh_ratio']:.3f}, "
-        f"L2+B_seen={network['remote_l2_b_seen']:.0f}"
+        f"L2+B_seen={network['remote_l2_b_seen']:.0f}, "
+        f"lowlevel_fresh_ratio={network['lowlevel_fresh_ratio']:.3f}"
     )
     print(
         "support: "
