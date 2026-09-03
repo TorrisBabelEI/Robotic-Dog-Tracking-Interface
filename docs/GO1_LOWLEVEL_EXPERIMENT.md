@@ -51,9 +51,22 @@ the executable is not running and are the intended deployment copy.
 
 ## What to do next
 
-The onboard `remote-preflight` has passed. The next experimental stage is
-`ground-handover`, followed by squat, one leg, and finally the four-leg
-sequence.
+The onboard `remote-preflight` has passed. **There is no next hardware command
+to run with the current build. Stop the hardware experiment here.**
+
+After a successful preflight:
+
+1. allow `remote-preflight` to close and write its log;
+2. keep Go1 fully prone;
+3. shut down Go1 using the normal battery shutdown procedure while it is still
+   supported by the floor;
+4. do not start `ground-handover`, squat, or a leg-lift mode;
+5. implement and dry-test the smooth lie-down-and-exit path.
+
+`ground-handover` is the next *future experimental stage*, not the next command
+to run now. Once a tested normal exit exists, power-cycle Go1, let the factory
+controller bring it to a normal stable stand, verify the original remote, and
+then proceed to Stage 1.
 
 However, **do not run `ground-handover` yet unless one of these conditions is
 met**:
@@ -68,7 +81,7 @@ robot in four-foot impedance hold. Panic damping can make a standing robot
 collapse. The unstable large Lego block is not an acceptable load-bearing
 support.
 
-Therefore the immediate next software task is to implement and dry-test the
+The immediate next task is therefore software work: implement and dry-test the
 smooth lie-down-and-exit path. Once that is available, continue with Stage 1 in
 this document. MOCAP is not needed for this work.
 
@@ -227,11 +240,21 @@ Prone calf angles can sit slightly below the SDK's normal command boundary.
 The program accepts a small feedback-only margin in confirmed prone preflight;
 it does not enlarge the limits used for commands or standing actions.
 
-## Stage 1: ground handover — next, but currently blocked
+### Mandatory stop after preflight
+
+On success, the program closes its UDP socket and leaves the robot physically
+prone. Do not launch a standing mode in the same boot. Shut the robot down
+normally while it remains prone. With the current build, this completes the
+hardware session.
+
+## Stage 1: ground handover — future stage, currently blocked
 
 Only start this stage after the exit limitation in **What to do next** has been
 resolved. The goal is to verify a quiet transition from the factory standing
 controller to low-level captured-pose hold before any commanded motion.
+
+The command in this section is retained for use after that software gate is
+cleared. It is not an instruction to run it immediately after Stage 0.
 
 ### Preconditions
 
@@ -260,6 +283,39 @@ Run three separate handover trials before Stage 2. Each trial must satisfy:
 - no packet gap greater than `20 ms`;
 - no safety or watchdog trigger;
 - no visible step, collapse, or violent motor response during takeover.
+
+### Interpreting the observed failed attempt
+
+The following output means that low-level takeover did not occur:
+
+```text
+[Error] Bind client ip&port failed: Address already in use
+Ground takeover aborted before low-level transmission:
+a stable high-level standing pose was not received.
+```
+
+The send, receive, and control loops are started only after the high-level pose
+capture succeeds. Therefore this attempt did not send low-level standing-hold
+commands.
+
+The first line means another live socket owned local UDP port `8090`; a
+completed UDP process does not retain a UDP `TIME_WAIT` reservation. Before any
+future retry, inspect the owner on the Pi without killing anything:
+
+```bash
+pgrep -af 'go1_lowlevel_experiment|example_|run_torque_tracking'
+sudo ss -lunp | grep -E ':(8090|8091)\b'
+```
+
+Do not work around this by choosing a random local port until the owner is
+identified. It may indicate that another robot controller is still active.
+
+The high-level capture failure separately means the program did not collect
+100 consecutive valid, stable `HIGHLEVEL` state packets from
+`192.168.123.161:8082`. Running this directly after prone low-level preflight,
+without a full shutdown and normal factory-controlled restart, is not a valid
+handover setup. The current program reports only the aggregate failure, so this
+message alone cannot distinguish a missing endpoint from rejected state data.
 
 ## Stage 2: squat and return
 
