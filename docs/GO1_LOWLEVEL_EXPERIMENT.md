@@ -1,405 +1,175 @@
-# Go1 low-level experiment: current step-by-step runbook
+# Go1 low-level experiment: current gate
 
-This is an operating checklist, not a design note. Follow the numbered steps
-in order and stop whenever a stated gate fails.
+This document contains only the next permitted operation. Follow it from top to
+bottom and stop at the end. It does not currently authorize a hardware
+preflight.
 
-## Read this first
+## Current objective
 
-The current hardware task is exactly one 60-second, prone
-`remote-preflight` run using the receive-snapshot panic fix.
+Identify the exact GUI-session command that starts and restarts Unitree's
+`programming.py`. This step is read-only.
 
-Do **not** run `ground-handover`, squat, `leg-lift`, or
-`leg-lift-sequence`. Those standing modes remain blocked until a smooth,
-tested lie-down-and-exit path exists.
+Do **not** stop a process, run `go1_lowlevel_experiment`, or create a hardware
+CSV yet. The proposed file `remote_preflight_fix_01.csv` does not exist in the
+repository and should not be created during this gate.
 
-The file `remote_preflight_fix_01.csv` does **not** exist in the repository and
-was not generated during software development. It will be created on the Go1
-Raspberry Pi only when Step 7 runs successfully. Step 8 copies it to Ubuntu.
+## Confirmed port conflict
 
-### Machine roles
-
-| Label in this document | Machine | Purpose |
-| --- | --- | --- |
-| **Development computer** | Computer used to edit and push Git | Source changes only |
-| **Ubuntu** | `aims-Precision-7780` | Pull source, deploy, SSH, download and analyze CSV |
-| **Pi** | Go1 onboard Raspberry Pi, `192.168.12.1` | Build and run the 500 Hz hardware process |
-
-Qualisys/MOCAP is not required for this preflight.
-
-On this Go1, Unitree starts the following system service at boot:
+The onboard Pi currently runs:
 
 ```text
 python3 /home/pi/Unitree/autostart/programming/programming.py
 local UDP 192.168.123.161:8090 -> 192.168.123.161:8082
 ```
 
-UDP 8090 is therefore expected to be busy. Do **not** stop or kill
-`programming.py`. The experiment uses Pi local port 8092 and still sends
-low-level packets to the unchanged robot endpoint `192.168.123.10:8007`.
+This is Unitree's optional Programming Module for its GUI/Blockly/MQTT
+interface. It:
 
-The machine changes are fixed and happen only at these points:
+- imports `robot_interface_high_level`;
+- connects to the local MQTT broker;
+- waits for `programming/action` and `programming/code`;
+- starts high-level `robotControl`, `UDPSend`, and `UDPRecv` children only after
+  receiving programming code;
+- nevertheless claims local UDP 8090 while idle because it imports the
+  high-level robot interface.
 
-1. Step 1 runs on the development computer and pushes the revision.
-2. Steps 2–3 run on Ubuntu and copy only the required build inputs.
-3. Steps 4–7 run in one Pi SSH session and create one hardware CSV.
-4. Steps 8–9 return to Ubuntu for analysis and exact-file cleanup.
-5. Step 10 shuts down the floor-supported robot and ends the experiment.
+It is not a core leg-control process, but it conflicts with Unitree's standard
+low-level source port. Testing local port 8092 produced only about `0.54 Hz`, so
+changing the source port is not an acceptable workaround.
 
-### Preflight panic behavior
-
-- `remote-preflight` continuously sends zero-torque damping. Hearing the motors
-  engage without visible motion is expected.
-- Joystick motion is logged but does not command robot motion.
-- `L2+B` is logged during this mode and deliberately does not cause another
-  state transition.
-- A preflight fault enters damping and closes automatically after a final
-  0.5-second damping window.
-- If `PANIC DAMPING ACTIVE` appears, do not immediately run the test again.
-  Continue to Step 8, copy the CSV, analyze the first abort, and stop.
-- The abort reason is latched. Hundreds of later panic rows with the same reason
-  describe one panic episode, not hundreds of independent faults.
-
-## Step 1 — Push the current revision from the development computer
-
-Skip this step only if the current source revision is already on GitHub.
-
-The revision must include these files:
+The required low-level path remains:
 
 ```text
-CMakeLists.txt
-src/go1_lowlevel_experiment.cpp
-src/go1_kinematics.cpp
-src/go1_kinematics.hpp
-test/go1_kinematics_test.cpp
-experiment/analyze_lowlevel_log.py
-docs/GO1_LOWLEVEL_EXPERIMENT.md
+Pi local UDP 8090 -> Go1 low-level endpoint 192.168.123.10:8007
 ```
 
-From the repository root on the **development computer**, run:
+The future high-level pose-capture source port remains 8091, but no standing
+mode is currently allowed.
 
-```bash
-git status --short
-git add .gitignore CMakeLists.txt \
-  src/go1_lowlevel_experiment.cpp \
-  docs/GO1_LOWLEVEL_EXPERIMENT.md
-git diff --cached --check
-git commit -m "Clarify onboard low-level preflight workflow"
-git push origin main
-```
+## Processes outside the experiment scope
 
-Do not add raw experiment CSVs, generated plots, or build directories. The
-repository ignores the local `logs/` directory.
+Do not stop or modify any of these processes:
 
-## Step 2 — Update the Ubuntu checkout
+- `Legged_sport`;
+- `appTransit`;
+- `hostapd`;
+- ROS obstacle or ultrasonic processes.
 
-Run on **Ubuntu**:
+Only `programming.py` is the confirmed 8090 conflict. Even that process must not
+be stopped until its exact restoration command is known.
 
-```bash
-cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
-git status --short
-git pull --ff-only
-git rev-parse --short HEAD
-```
+## Step 1 — SSH from Ubuntu to the onboard Pi
 
-`git status --short` must be empty before pulling. If it is not empty, preserve
-or resolve the Ubuntu changes; do not discard them to force the update.
-
-## Step 3 — Copy only the hardware build inputs to the Pi
-
-Run on **Ubuntu**, from the repository root:
-
-```bash
-cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
-ssh pi@192.168.12.1 'mkdir -p ~/Robotic-Dog-Tracking-Interface'
-rsync -avR \
-  ./CMakeLists.txt \
-  ./src/go1_lowlevel_experiment.cpp \
-  ./src/go1_kinematics.cpp \
-  ./src/go1_kinematics.hpp \
-  ./test/go1_kinematics_test.cpp \
-  ./externals/unitree_legged_sdk/include/ \
-  ./externals/unitree_legged_sdk/lib/cpp/arm64/ \
-  pi@192.168.12.1:~/Robotic-Dog-Tracking-Interface/
-```
-
-This command intentionally does **not** copy:
-
-- `experiment/` analysis code;
-- historical trajectory CSVs;
-- PNG/JPG plots;
-- Git history;
-- Ubuntu/macOS build directories.
-
-The analyzer stays on Ubuntu. `BUILD_SDK_EXAMPLES=OFF` allows the Pi build to
-omit Unitree's example source files as well.
-
-## Step 4 — Inspect Pi storage and old logs
-
-Run on **Ubuntu**:
+On the **Ubuntu workstation**:
 
 ```bash
 ssh pi@192.168.12.1
 ```
 
-The remaining commands in Steps 4–7 run on the **Pi**. Confirm the prompt starts
-with `pi@raspberrypi`.
+Confirm that the prompt begins with `pi@raspberrypi`. All remaining commands in
+this runbook run on the **Pi**.
 
-```bash
-cd ~/Robotic-Dog-Tracking-Interface
-df -h /
-find . -maxdepth 2 -type f -name '*.csv' \
-  -printf '%TY-%Tm-%Td %TH:%TM %10s %p\n'
-```
-
-Do not delete anything during this inspection step. If `/` is at or above 90%
-use, stop here and archive old files before scheduling the hardware run.
-
-Keep the repository, `build-arm64`, SDK headers/libraries, and current
-executable on the Pi.
-
-## Step 5 — Build and run software tests on the Pi
+## Step 2 — Record the current process and UDP owner
 
 Run on the **Pi**:
 
 ```bash
-cd ~/Robotic-Dog-Tracking-Interface
-cmake -S . -B build-arm64 \
-  -DPYTHON_BUILD=OFF -DBUILD_SDK_EXAMPLES=OFF
-cmake --build build-arm64 --target \
-  go1_lowlevel_experiment go1_kinematics_test -j2
-(cd build-arm64 && ctest --output-on-failure)
-mkdir -p logs
-find build-arm64 -maxdepth 1 -type f -name 'go1_dry_*.csv' \
-  -print -delete
-```
-
-All 17 tests must pass. The parenthesized `cd` form is required because the
-older CTest installed on the Pi does not support `ctest --test-dir`; using that
-option there can incorrectly print `No tests were found`. CTest's
-`go1_dry_*.csv` files are simulated data and the final command removes them.
-
-## Step 6 — Check route, processes, and UDP ports
-
-Run on the **Pi**:
-
-```bash
-export GO1_LOCAL_PORT=8092
-
-ip route get 192.168.123.10
-pgrep -af '/home/pi/Unitree/autostart/programming/programming.py'
+pgrep -af 'python3 programming.py'
 sudo ss -Huanp | awk '$4 ~ /:8090$/ { print }'
-
-pgrep -af 'go1_lowlevel_experiment|example_|run_torque_tracking' \
-  || echo 'OK: no known controller process is running'
-
-sudo ss -Huanp | awk -v port="$GO1_LOCAL_PORT" '
-  $4 ~ (":" port "$") { found=1; print }
-  END { if (!found) print "OK: ss found no socket on selected local port" }
-'
-
-sudo fuser -v "${GO1_LOCAL_PORT}/udp" 2>&1 \
-  || echo 'OK: fuser found no owner for the selected local port'
-
-python3 - <<'PY'
-import os
-import socket
-
-port = int(os.environ["GO1_LOCAL_PORT"])
-probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-try:
-    probe.bind(("0.0.0.0", port))
-except OSError as error:
-    print(f"BUSY: UDP {port}: {error}")
-else:
-    print(f"FREE: UDP {port}")
-finally:
-    probe.close()
-PY
+sudo fuser -v 8090/udp
 ```
 
-Required results:
+Expected observations:
 
-- The route resembles
-  `192.168.123.10 dev eth0 src 192.168.123.161`.
-- The first `pgrep` and `ss` commands show Unitree's `programming.py` and its
-  expected use of UDP 8090. Do not terminate it.
-- The controller `pgrep`, selected-port `ss`, and selected-port `fuser` checks
-  report no experiment process or owner on UDP 8092.
-- The bind probe prints `FREE: UDP 8092`.
+- `pgrep` prints the current `programming.py` PID. The PID may change on every
+  boot; never reuse an earlier PID such as 1869 or 1848.
+- `ss` shows local `192.168.123.161:8090` connected to
+  `192.168.123.161:8082`.
+- `fuser` identifies the same current process as the port owner.
 
-The earlier `ss -lunp` check was incomplete because `-l` can omit a connected
-UDP socket such as `programming.py` on 8090. The `ss -Huanp` command above
-checks all UDP states. The final bind probe is the authoritative go/no-go test
-because it performs the same `0.0.0.0:<selected-port>` bind used by the
-experiment.
+Use `ss -Huanp`, not `ss -lunp`: the latter only shows listening/unconnected
+UDP sockets and previously hid this connected socket.
 
-If the selected-port bind probe prints `BUSY`, do not run the experiment and do
-not stop `programming.py`. Capture these diagnostics on the **Pi**:
-
-```bash
-sudo ss -Huanpe
-sudo fuser -v "${GO1_LOCAL_PORT}/udp"
-GO1_LOCAL_PORT_HEX=$(printf '%04X' "$GO1_LOCAL_PORT")
-sudo grep -i ":${GO1_LOCAL_PORT_HEX} " /proc/net/udp /proc/net/udp6
-```
-
-Identify the selected-port owner before stopping any non-Unitree process. If
-all three ownership checks are empty but the bind probe still says `BUSY`, save
-their complete output and stop; do not keep retrying preflight. The executable
-repeats the selected-port bind check before its arming prompt.
-
-The separate high-level local port remains 8091. It will be checked
-automatically if a future `ground-handover` run is enabled, but that standing
-mode is not part of the current experiment.
-
-## Step 7 — Run one prone preflight on the Pi
-
-### 7.1 Prepare the robot
-
-1. Put Go1 on a flat, non-slip floor with its abdomen fully supported.
-2. Fold all legs into the normal prone position; no leg may be trapped beneath
-   the body.
-3. Turn on the original remote.
-4. Power on Go1 normally and wait for startup.
-5. Use the factory remote to make Go1 lie down fully and enter prone damping
-   with `L2+B`.
-6. Keep everyone clear of the legs.
-
-Do not lift the powered robot.
-
-### 7.2 Start the program
+## Step 3 — Read the GUI startup configuration
 
 Run on the **Pi**:
 
 ```bash
-cd ~/Robotic-Dog-Tracking-Interface
-if [ -e logs/remote_preflight_fix_01.csv ]; then
-  echo 'STOP: this log filename already exists'
-else
-  echo 'OK: this log filename is unused'
-  ./build-arm64/go1_lowlevel_experiment --mode remote-preflight \
-    --local-port 8092 \
-    --prone-confirmed --duration-s 60 \
-    --log logs/remote_preflight_fix_01.csv
-fi
+sed -n '1,260p' /home/pi/Unitree/autostart/startup_manager.py
+sed -n '1,260p' /home/pi/.config/lxsession/LXDE-pi/autostart
+grep -Rsn 'programming\|startup_manager' \
+  /home/pi/.config /home/pi/Unitree/autostart \
+  /etc/xdg 2>/dev/null
 ```
 
-If the check prints `STOP`, the program will not start. First preserve the
-existing file, or use a new unique filename consistently in Steps 7–9.
+Keep the complete output, including the command line around every match. The
+required result is the exact action that recreates the Programming Module in
+the existing GUI user session—not a guessed `systemctl` command. It is already
+known that `programming.py` is not an independent systemd service.
 
-At the prompt type exactly:
+## Step 4 — Exit and stop
 
-```text
-ARM DAMPING
-```
-
-During the 60 seconds:
-
-1. move each joystick;
-2. press `L2+B` at least once;
-3. confirm joystick values change and `L2+B=1` appears;
-4. do not expect the robot to follow joystick motion.
-
-On success, the program exits by itself and prints the log path. Only now should
-this file exist on the Pi:
-
-```text
-~/Robotic-Dog-Tracking-Interface/logs/remote_preflight_fix_01.csv
-```
-
-If panic occurs, wait for the prone preflight to close automatically. Do not
-start another run.
-
-## Step 8 — Copy and analyze the CSV on Ubuntu
-
-Return to **Ubuntu**:
+Run on the **Pi**:
 
 ```bash
 exit
-cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
-conda activate dog_ctrl
-mkdir -p logs/downloaded
-ssh pi@192.168.12.1 \
-  'sha256sum ~/Robotic-Dog-Tracking-Interface/logs/remote_preflight_fix_01.csv'
-scp pi@192.168.12.1:~/Robotic-Dog-Tracking-Interface/logs/remote_preflight_fix_01.csv \
-  logs/downloaded/
-sha256sum logs/downloaded/remote_preflight_fix_01.csv
-python3 experiment/analyze_lowlevel_log.py \
-  logs/downloaded/remote_preflight_fix_01.csv --no-plots
 ```
 
-The remote and local SHA-256 values must match.
+Save the complete Step 2 and Step 3 terminal output on Ubuntu. This is the end
+of the current procedure.
 
-The run passes only if all of these conditions hold:
+Do not run `kill`, do not rebuild or start the experiment, and do not repeat a
+preflight. First add the verified Programming Module restart command to this
+document.
 
-```text
-feedback rate             >= 450 Hz
-p99 feedback gap          <= 10 ms
-maximum feedback gap      <= 20 ms
-remote_valid_fresh_ratio  close to 1.0
-L2+B_seen                 1
-lowlevel_fresh_ratio      close to 1.0
-duplicate_fresh           0
-gap_over_20ms             0
-watchdog_cycles           0
-abort reasons             absent
-```
+## Locked next phase — not executable yet
 
-The analyzer now prints the first abort sample separately. In the earlier
-failed log, only the first duplicate `tick=332367` triggered
-`remote_preflight_tick_invalid`; subsequent panic rows retained that one
-latched reason. The fixed receive path publishes the state packet and sequence
-under the same lock.
+After the restart path is known, the next revision will expand the following
+sequence into exact commands:
 
-If any gate fails, save the Ubuntu CSV and terminal output, stop the experiment,
-and diagnose that one run offline. Do not keep repeating preflight.
+1. Pull the revised source on Ubuntu and copy only the C++ build inputs, SDK
+   headers, and arm64 SDK library to the Pi.
+2. Build and run all 17 software tests on the Pi.
+3. Put Go1 fully prone on a flat floor and enter remote damping with `L2+B`.
+4. Resolve the current `programming.py` PID with `pgrep` and confirm that the
+   same process owns local UDP 8090.
+5. Send `TERM` to that current PID only, wait two seconds, and verify that 8090
+   is free. If a startup manager immediately recreates it, do not kill it
+   repeatedly; stop and address the manager first.
+6. Run one prone preflight using local 8090 and the unchanged low-level target
+   `192.168.123.10:8007`.
+7. Restore the Programming Module with the verified GUI-session command and
+   confirm that both its process and
+   `8090 -> 192.168.123.161:8082` socket return.
+8. Copy the raw CSV to Ubuntu, compare checksums, analyze it on Ubuntu, and
+   delete only the verified Pi copy.
+9. Shut down Go1 normally while it remains prone and floor-supported.
 
-## Step 9 — Clean the verified hardware CSV from the Pi
-
-Perform this only after Step 8 succeeds and the Ubuntu copy opens correctly.
-Run on **Ubuntu**:
+The future preflight command will be:
 
 ```bash
-ssh pi@192.168.12.1 \
-  'rm -- ~/Robotic-Dog-Tracking-Interface/logs/remote_preflight_fix_01.csv'
-ssh pi@192.168.12.1 \
-  'find ~/Robotic-Dog-Tracking-Interface/logs -maxdepth 1 \
-   -type f -name "*.csv" -printf "%10s %p\n"'
+./build-arm64/go1_lowlevel_experiment --mode remote-preflight \
+  --local-port 8090 \
+  --prone-confirmed --duration-s 60 \
+  --log logs/remote_preflight_fix_01.csv
 ```
 
-The first command deletes only the exact verified Pi copy. The archived Ubuntu
-copy remains in `logs/downloaded/`.
+Do not run it in the current gate. The executable now also defaults to local
+port 8090.
 
-For an older CSV stored in the Pi repository root, use the same sequence:
-copy it, compare checksums, analyze it on Ubuntu, and delete only its exact
-filename. Never use `rm *.csv`, and never delete `build-arm64` or the SDK.
+## Future preflight behavior
 
-## Step 10 — Shut down and stop
+- The program sends zero-torque damping continuously. Motor engagement sounds
+  without visible motion are expected.
+- Joystick motion is logged but does not command robot motion.
+- `L2+B` is recorded and deliberately does not cause a second transition in
+  `remote-preflight`.
+- A preflight fault sends a final 0.5-second damping window and then closes.
+- If panic occurs, preserve and analyze that one CSV; do not immediately repeat
+  the test.
 
-Go1 should still be fully prone. Shut it down using the normal battery shutdown
-procedure while it remains floor-supported.
+## Deployment boundary
 
-After one successful fixed preflight, mark the preflight gate complete. Do not
-repeat it again unless code affecting UDP reception, state freshness, remote
-decoding, damping, watchdog, or panic handling changes.
-
-There is no standing hardware step in the current runbook. The next task is
-software-only implementation and dry-run review of a smooth lie-down-and-exit
-path. This document must be extended with a new numbered procedure before any
-standing experiment is authorized.
-
-## Reference: why control runs onboard
-
-The onboard run measured approximately `469.63 Hz`, with a `4.096 ms` p99 gap
-and an `8.542 ms` maximum gap. A previous Ubuntu-direct Wi-Fi run measured only
-`339.42 Hz` and a `142.002 ms` maximum gap. Therefore the Pi owns the 500 Hz
-motor loop, watchdog, and safety state machine. Ubuntu owns analysis and future
-MPPI/Qualisys integration.
-
-For future work, the intended split is:
-
-```text
-Qualisys -> Ubuntu MPPI -> lower-rate references -> Pi 500 Hz safety loop -> Go1
-```
-
-MOCAP is optional ground truth and must not be required by the fast motor loop.
+The Pi owns the 500 Hz motor loop, watchdog, and safety state machine. Ubuntu
+owns SSH operation, CSV analysis, and future MPPI/Qualisys integration. MOCAP
+is not required for the preflight and must not enter the fast motor loop.
