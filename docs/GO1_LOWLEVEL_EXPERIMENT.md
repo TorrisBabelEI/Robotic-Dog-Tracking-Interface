@@ -26,6 +26,17 @@ Raspberry Pi only when Step 7 runs successfully. Step 8 copies it to Ubuntu.
 
 Qualisys/MOCAP is not required for this preflight.
 
+On this Go1, Unitree starts the following system service at boot:
+
+```text
+python3 /home/pi/Unitree/autostart/programming/programming.py
+local UDP 192.168.123.161:8090 -> 192.168.123.161:8082
+```
+
+UDP 8090 is therefore expected to be busy. Do **not** stop or kill
+`programming.py`. The experiment uses Pi local port 8092 and still sends
+low-level packets to the unchanged robot endpoint `192.168.123.10:8007`.
+
 The machine changes are fixed and happen only at these points:
 
 1. Step 1 runs on the development computer and pushes the revision.
@@ -172,31 +183,37 @@ option there can incorrectly print `No tests were found`. CTest's
 Run on the **Pi**:
 
 ```bash
+export GO1_LOCAL_PORT=8092
+
 ip route get 192.168.123.10
+pgrep -af '/home/pi/Unitree/autostart/programming/programming.py'
+sudo ss -Huanp | awk '$4 ~ /:8090$/ { print }'
+
 pgrep -af 'go1_lowlevel_experiment|example_|run_torque_tracking' \
   || echo 'OK: no known controller process is running'
 
-sudo ss -Huanp | awk '
-  $4 ~ /:(8090|8091)$/ { found=1; print }
-  END { if (!found) print "OK: ss found no local UDP socket on 8090 or 8091" }
+sudo ss -Huanp | awk -v port="$GO1_LOCAL_PORT" '
+  $4 ~ (":" port "$") { found=1; print }
+  END { if (!found) print "OK: ss found no socket on selected local port" }
 '
 
-sudo fuser -v 8090/udp 8091/udp 2>&1 \
-  || echo 'OK: fuser found no owner for UDP 8090 or 8091'
+sudo fuser -v "${GO1_LOCAL_PORT}/udp" 2>&1 \
+  || echo 'OK: fuser found no owner for the selected local port'
 
 python3 - <<'PY'
+import os
 import socket
 
-for port in (8090, 8091):
-    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        probe.bind(("0.0.0.0", port))
-    except OSError as error:
-        print(f"BUSY: UDP {port}: {error}")
-    else:
-        print(f"FREE: UDP {port}")
-    finally:
-        probe.close()
+port = int(os.environ["GO1_LOCAL_PORT"])
+probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+try:
+    probe.bind(("0.0.0.0", port))
+except OSError as error:
+    print(f"BUSY: UDP {port}: {error}")
+else:
+    print(f"FREE: UDP {port}")
+finally:
+    probe.close()
 PY
 ```
 
@@ -204,28 +221,36 @@ Required results:
 
 - The route resembles
   `192.168.123.10 dev eth0 src 192.168.123.161`.
-- `pgrep`, `ss`, and `fuser` report no controller or port owner.
-- The bind probe prints `FREE: UDP 8090` and `FREE: UDP 8091`.
+- The first `pgrep` and `ss` commands show Unitree's `programming.py` and its
+  expected use of UDP 8090. Do not terminate it.
+- The controller `pgrep`, selected-port `ss`, and selected-port `fuser` checks
+  report no experiment process or owner on UDP 8092.
+- The bind probe prints `FREE: UDP 8092`.
 
 The earlier `ss -lunp` check was incomplete because `-l` can omit a connected
-UDP socket that still owns the local port. The `ss -Huanp` command above checks
-all UDP states; the final bind probe is the authoritative go/no-go test because
-it performs the same `0.0.0.0:<port>` bind used by the experiment.
+UDP socket such as `programming.py` on 8090. The `ss -Huanp` command above
+checks all UDP states. The final bind probe is the authoritative go/no-go test
+because it performs the same `0.0.0.0:<selected-port>` bind used by the
+experiment.
 
-If either bind probe prints `BUSY`, do not run the experiment and do not choose
-a random replacement port. Capture these diagnostics on the **Pi**:
+If the selected-port bind probe prints `BUSY`, do not run the experiment and do
+not stop `programming.py`. Capture these diagnostics on the **Pi**:
 
 ```bash
-sudo ss -uanpe
-sudo fuser -v 8090/udp 8091/udp
-sudo grep -iE ':(1F9A|1F9B) ' /proc/net/udp /proc/net/udp6
+sudo ss -Huanpe
+sudo fuser -v "${GO1_LOCAL_PORT}/udp"
+GO1_LOCAL_PORT_HEX=$(printf '%04X' "$GO1_LOCAL_PORT")
+sudo grep -i ":${GO1_LOCAL_PORT_HEX} " /proc/net/udp /proc/net/udp6
 ```
 
-`1F9A` and `1F9B` are ports 8090 and 8091 in hexadecimal. Identify the owner
-before stopping any process. If all three ownership checks are empty but the
-bind probe still says `BUSY`, save their complete output and stop; do not keep
-retrying preflight. The executable repeats the bind check before its arming
-prompt.
+Identify the selected-port owner before stopping any non-Unitree process. If
+all three ownership checks are empty but the bind probe still says `BUSY`, save
+their complete output and stop; do not keep retrying preflight. The executable
+repeats the selected-port bind check before its arming prompt.
+
+The separate high-level local port remains 8091. It will be checked
+automatically if a future `ground-handover` run is enabled, but that standing
+mode is not part of the current experiment.
 
 ## Step 7 — Run one prone preflight on the Pi
 
@@ -253,6 +278,7 @@ if [ -e logs/remote_preflight_fix_01.csv ]; then
 else
   echo 'OK: this log filename is unused'
   ./build-arm64/go1_lowlevel_experiment --mode remote-preflight \
+    --local-port 8092 \
     --prone-confirmed --duration-s 60 \
     --log logs/remote_preflight_fix_01.csv
 fi

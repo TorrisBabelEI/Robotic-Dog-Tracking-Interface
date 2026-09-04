@@ -148,7 +148,7 @@ struct Options {
   go1::Leg requestedLeg = go1::Leg::FR;
   std::string logPath = "go1_lowlevel_log.csv";
   std::string targetIp = "192.168.123.10";
-  uint16_t localPort = 8090;
+  uint16_t localPort = 8092;
   uint16_t targetPort = 8007;
   std::string highTargetIp = "192.168.123.161";
   uint16_t highLocalPort = 8091;
@@ -1478,9 +1478,12 @@ void printUsage(const char *program) {
       << "  --duration-s 10\n  --log PATH\n  --support-confirmed\n"
       << "  --ground-confirmed\n  --remote-confirmed\n  --prone-confirmed\n"
       << "  --dry-run\n"
-      << "  --target-ip ADDRESS\n  --local-port PORT\n  --target-port PORT\n"
-      << "  --high-target-ip ADDRESS\n  --high-local-port PORT\n"
-      << "  --high-target-port PORT\n";
+      << "  --target-ip ADDRESS       (default 192.168.123.10)\n"
+      << "  --local-port PORT         (default 8092)\n"
+      << "  --target-port PORT        (default 8007)\n"
+      << "  --high-target-ip ADDRESS  (default 192.168.123.161)\n"
+      << "  --high-local-port PORT    (default 8091)\n"
+      << "  --high-target-port PORT   (default 8082)\n";
 }
 Options parseOptions(int argc, char **argv) {
   Options o;
