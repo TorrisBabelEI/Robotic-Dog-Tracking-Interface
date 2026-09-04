@@ -27,6 +27,10 @@
 #include "unitree_legged_sdk/joystick.h"
 #include "unitree_legged_sdk/unitree_legged_sdk.h"
 #include <boost/bind/bind.hpp>
+#include <cerrno>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
 #endif
 
 namespace {
@@ -270,7 +274,7 @@ public:
     while (handledSignalCount_ < count) {
       ++handledSignalCount_;
       if (phase_ == Phase::PanicDamping) {
-        panicExitRequested_ = true;
+        requestPanicExit(nowNs);
       } else if (lastSignalNs_ > 0 && nowNs - lastSignalNs_ <= 1000000000LL) {
         enterPanic("double_ctrl_c", nowNs);
       } else {
@@ -341,19 +345,19 @@ public:
                               ? "remote_preflight_tick_invalid"
                               : "remote_preflight_invalid_lowstate"),
                    hostNs);
-        panicExitRequested_ = true;
+        requestPanicExit(hostNs);
       } else if (!remoteCommunicationReady_ && phaseElapsedS_ >= 5.0) {
         const std::string issue = feedbackReadinessIssue(feedback, hasState);
         enterPanic(std::string("remote_preflight_") +
                        (issue.empty() ? "insufficient_packet_streak" : issue),
                    hostNs);
-        panicExitRequested_ = true;
+        requestPanicExit(hostNs);
       } else if (phaseElapsedS_ >= options_.durationS) {
         if (!remoteEverValid_ || !remoteChordSeen_) {
           enterPanic(!remoteEverValid_ ? "remote_data_never_valid"
                                       : "remote_l2_b_not_seen",
                      hostNs);
-          panicExitRequested_ = true;
+          requestPanicExit(hostNs);
         } else {
           transition(Phase::Complete);
         }
@@ -432,7 +436,8 @@ public:
       command = dampingCommand();
       if (dampingCommandNs_ == 0) dampingCommandNs_ = hostNs;
       if ((options_.dryRun && phaseElapsedS_ >= 0.5) ||
-          (panicExitRequested_ && phaseElapsedS_ >= 0.5))
+          (panicExitRequestNs_ > 0 &&
+           hostNs - panicExitRequestNs_ >= 500000000LL))
         transition(Phase::Complete);
       break;
     case Phase::Complete:
@@ -884,6 +889,15 @@ private:
     if (phase_ == Phase::Complete || phase_ == Phase::PanicDamping) return;
     failed_ = true; faultReason_ = stopSource_ = source; stopRequestNs_ = nowNs;
     transition(Phase::PanicDamping); panicReached_.store(true);
+    // Remote preflight is only permitted while the robot is fully prone, so
+    // every preflight panic may close automatically after a final damping
+    // window. Ground-mode panic remains latched until the operator requests
+    // exit explicitly.
+    if (options_.mode == ExperimentMode::RemotePreflight)
+      requestPanicExit(nowNs);
+  }
+  void requestPanicExit(int64_t nowNs) {
+    if (panicExitRequestNs_ == 0) panicExitRequestNs_ = nowNs;
   }
   void sanitizeCommand(Command &c) const {
     for (std::size_t i = 0; i < kJointCount; ++i) {
@@ -966,9 +980,9 @@ private:
   bool poseCaptured_ = false, precheckPoseCaptured_ = false, failed_ = false;
   bool remoteCommunicationReady_ = false, remoteEverValid_ = false;
   bool remoteChordSeen_ = false;
-  bool panicExitRequested_ = false;
   int handledSignalCount_ = 0;
   int64_t lastSignalNs_ = 0, stopRequestNs_ = 0, dampingCommandNs_ = 0;
+  int64_t panicExitRequestNs_ = 0;
   std::string faultReason_, stopSource_;
   std::atomic<bool> doneFlag_{false}, safeHoldReached_{false}, panicReached_{false};
   std::array<float, kJointCount> precheckQ_{{0}}, initialQ_{{0}}, returnQ_{{0}};
@@ -1086,6 +1100,36 @@ int runDry(const Options &options) {
 
 #if defined(GO1_WITH_SDK)
 using namespace UNITREE_LEGGED_SDK;
+
+void requireUdpPortAvailable(uint16_t port, const char *purpose) {
+  const int socketFd = ::socket(AF_INET, SOCK_DGRAM, 0);
+  if (socketFd < 0)
+    throw std::runtime_error(std::string("cannot create UDP port probe for ") +
+                             purpose + ": " + std::strerror(errno));
+  sockaddr_in address = {};
+  address.sin_family = AF_INET;
+  address.sin_addr.s_addr = htonl(INADDR_ANY);
+  address.sin_port = htons(port);
+  if (::bind(socketFd, reinterpret_cast<sockaddr *>(&address),
+             sizeof(address)) < 0) {
+    const std::string detail = std::strerror(errno);
+    ::close(socketFd);
+    throw std::runtime_error(
+        std::string(purpose) + " local UDP port " + std::to_string(port) +
+        " is unavailable: " + detail +
+        ". Inspect it with: sudo ss -lunp | grep ':" +
+        std::to_string(port) + "\\b'");
+  }
+  ::close(socketFd);
+}
+
+void validateHardwarePorts(const Options &options) {
+  requireUdpPortAvailable(options.localPort, "low-level controller");
+  if (isGroundMode(options.mode))
+    requireUdpPortAvailable(options.highLocalPort,
+                            "high-level pose capture");
+}
+
 Feedback convertFeedback(const LowState &state) {
   Feedback f;
   f.levelFlag = state.levelFlag; f.tickMs = state.tick;
@@ -1296,9 +1340,18 @@ private:
     LowState candidate = {}; udp_.GetRecv(candidate);
     if (!hasState_.load() || candidate.tick != recvThreadLastTick_) {
       recvThreadLastTick_ = candidate.tick;
-      { std::lock_guard<std::mutex> lock(stateMutex_);
-        lowState_ = candidate; feedback_ = convertFeedback(candidate); }
-      stateSequence_.fetch_add(1); lastRecvNs_.store(steadyNowNs()); hasState_.store(true);
+      // Publish the state and its sequence under the same lock. Previously the
+      // sequence increment happened after releasing stateMutex_. A control
+      // cycle could therefore copy the old state, observe the new sequence,
+      // and incorrectly label a duplicate tick as a fresh packet.
+      {
+        std::lock_guard<std::mutex> lock(stateMutex_);
+        lowState_ = candidate;
+        feedback_ = convertFeedback(candidate);
+        stateSequence_.fetch_add(1, std::memory_order_relaxed);
+        lastRecvNs_.store(steadyNowNs(), std::memory_order_relaxed);
+        hasState_.store(true, std::memory_order_relaxed);
+      }
     }
   }
   void sendStep() {
@@ -1317,9 +1370,19 @@ private:
     const double loopUs = lastControlNs_ == 0 ? 2000.0 : (now - lastControlNs_) / 1000.0;
     lastControlNs_ = now;
     Feedback f; LowState state = {};
-    const bool hasState = hasState_.load();
-    if (hasState) { std::lock_guard<std::mutex> lock(stateMutex_); f = feedback_; state = lowState_; }
-    const uint64_t sequence = stateSequence_.load();
+    bool hasState = false;
+    uint64_t sequence = 0;
+    {
+      // Copy the packet and the sequence atomically with respect to recvStep()
+      // so recv_ok/fresh always describes the copied tick.
+      std::lock_guard<std::mutex> lock(stateMutex_);
+      hasState = hasState_.load(std::memory_order_relaxed);
+      if (hasState) {
+        f = feedback_;
+        state = lowState_;
+      }
+      sequence = stateSequence_.load(std::memory_order_relaxed);
+    }
     const bool fresh = sequence != controlLastSequence_; controlLastSequence_ = sequence;
     if (options_.mode == ExperimentMode::RemotePreflight && fresh &&
         shouldPrintRemote(f, now)) {
@@ -1511,6 +1574,7 @@ int main(int argc, char **argv) {
     std::signal(SIGINT, signalHandler); std::signal(SIGTERM, signalHandler);
     if (options.dryRun) return runDry(options);
 #if defined(GO1_WITH_SDK)
+    validateHardwarePorts(options);
     { std::ofstream probe(options.logPath.c_str(), std::ios::out | std::ios::app);
       if (!probe) throw std::runtime_error("cannot write log path: " + options.logPath); }
     if (options.mode != ExperimentMode::RemotePreflight) {

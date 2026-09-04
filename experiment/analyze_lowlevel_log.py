@@ -203,6 +203,13 @@ def network_metrics(
     host_s = data["host_monotonic_ns"] * 1.0e-9
     recv_mask = data["recv_ok"] > 0.5
     recv_times = host_s[recv_mask & np.isfinite(host_s)]
+    fresh_ticks = data["state_tick_ms"][
+        recv_mask & np.isfinite(data["state_tick_ms"])
+    ].astype(np.int64)
+    raw_tick_deltas = np.diff(fresh_ticks)
+    tick_deltas = np.where(
+        raw_tick_deltas < 0, raw_tick_deltas + 2**32, raw_tick_deltas
+    )
     elapsed = float(host_s[-1] - host_s[0]) if host_s.size > 1 else math.nan
     gaps = np.diff(recv_times)
     hold_indices = np.flatnonzero(data["phase"] == "HOLD")
@@ -260,6 +267,10 @@ def network_metrics(
         "remote_valid_fresh_ratio": remote_valid_ratio,
         "remote_l2_b_seen": remote_l2_b_seen,
         "lowlevel_fresh_ratio": lowlevel_fresh_ratio,
+        "fresh_tick_duplicate_count": float(np.count_nonzero(tick_deltas == 0)),
+        "fresh_tick_gap_over_20ms_count": float(
+            np.count_nonzero(tick_deltas > 20)
+        ),
     }
 
 
@@ -423,6 +434,8 @@ def write_summary(
         "remote_valid_fresh_ratio",
         "remote_l2_b_seen",
         "lowlevel_fresh_ratio",
+        "fresh_tick_duplicate_count",
+        "fresh_tick_gap_over_20ms_count",
         "min_active_support_margin_m",
         "min_airborne_force_ratio",
         "final_contact_force_ratio",
@@ -635,6 +648,11 @@ def main() -> int:
         f"lowlevel_fresh_ratio={network['lowlevel_fresh_ratio']:.3f}"
     )
     print(
+        "tick: "
+        f"duplicate_fresh={network['fresh_tick_duplicate_count']:.0f}, "
+        f"gap_over_20ms={network['fresh_tick_gap_over_20ms_count']:.0f}"
+    )
+    print(
         "support: "
         f"min_margin={support['min_active_support_margin_m']:.4f} m, "
         f"min_air_force_ratio={support['min_airborne_force_ratio']:.3f}, "
@@ -644,6 +662,16 @@ def main() -> int:
     )
     if abort_reasons:
         print("abort reasons: " + ", ".join(abort_reasons))
+        abort_mask = np.asarray(
+            [bool(reason.strip()) for reason in data["abort_reason"]], dtype=bool
+        )
+        first_abort = int(np.flatnonzero(abort_mask)[0])
+        print(
+            "first abort: "
+            f"sample={first_abort}, phase={data['phase'][first_abort]}, "
+            f"tick={data['state_tick_ms'][first_abort]:.0f}, "
+            f"reason={data['abort_reason'][first_abort]}"
+        )
     for metric in metrics:
         if metric["max_abs_tau_ff_nm"] > 1.0e-6 or metric["position_rms_rad"] > 0:
             print(
