@@ -19,6 +19,7 @@ include_directories(externals/unitree_legged_sdk/include)
 link_directories(externals/unitree_legged_sdk/lib/cpp/${ARCH})
 
 option(PYTHON_BUILD "build python wrapper" OFF)
+option(BUILD_SDK_EXAMPLES "build Unitree SDK example executables" OFF)
 if(PYTHON_BUILD)
   add_subdirectory(externals/unitree_legged_sdk/python_wrapper)
 endif()
@@ -37,9 +38,9 @@ endif()
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
-# The bundled SDK libraries are Linux binaries. Keep native hardware examples
-# out of non-Linux builds so a normal macOS build can still run dry tests.
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+# Unitree's example programs are optional deployment extras. The experiment
+# executable below still receives hardware support on every Linux build.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND BUILD_SDK_EXAMPLES)
   # one pc one process
   add_executable(example_position externals/unitree_legged_sdk/example/example_position.cpp)
   target_link_libraries(example_position ${EXTRA_LIBS})
@@ -164,7 +165,7 @@ endif()
 
 # install
 set(GO1_INSTALL_TARGETS go1_lowlevel_experiment)
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND BUILD_SDK_EXAMPLES)
   list(APPEND GO1_INSTALL_TARGETS
        example_position example_velocity example_torque example_walk
        example_joystick)

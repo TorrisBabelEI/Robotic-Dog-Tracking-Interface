@@ -1,546 +1,341 @@
-# Go1 low-level experiment: onboard Raspberry Pi runbook
+# Go1 low-level experiment: current step-by-step runbook
 
-This document is the single operating procedure for the current torque-channel
-and basic-motion experiments. Historical Ubuntu-direct tests are recorded only
-in the appendix and are **not** the current deployment method.
+This is an operating checklist, not a design note. Follow the numbered steps
+in order and stop whenever a stated gate fails.
 
-## Current decision
+## Read this first
 
-All hardware modes of `go1_lowlevel_experiment` run on the Raspberry Pi inside
-Go1. The external Ubuntu workstation is only the operator and analysis machine.
+The current hardware task is exactly one 60-second, prone
+`remote-preflight` run using the receive-snapshot panic fix.
 
-| Function | Machine |
-| --- | --- |
-| `remote-preflight` | Go1 Raspberry Pi |
-| `ground-handover` | Go1 Raspberry Pi |
-| `squat`, `leg-lift`, `leg-lift-sequence` | Go1 Raspberry Pi |
-| 500 Hz motor command, watchdog, and safety checks | Go1 Raspberry Pi |
-| SSH, source synchronization, and log download | Ubuntu workstation |
-| Python log analysis | Ubuntu workstation |
-| Qualisys and future MPPI | Ubuntu workstation |
+Do **not** run `ground-handover`, squat, `leg-lift`, or
+`leg-lift-sequence`. Those standing modes remain blocked until a smooth,
+tested lie-down-and-exit path exists.
 
-The present data support this decision:
+The file `remote_preflight_fix_01.csv` does **not** exist in the repository and
+was not generated during software development. It will be created on the Go1
+Raspberry Pi only when Step 7 runs successfully. Step 8 copies it to Ubuntu.
 
-- The onboard preflight achieved `469.63 Hz`, a `4.096 ms` p99 packet gap, and
-  an `8.542 ms` maximum gap. It also received valid low-level state and detected
-  `L2+B`.
-- An Ubuntu-direct Wi-Fi run achieved only `339.42 Hz` and had a `142.002 ms`
-  maximum packet gap. It fails the low-level communication gate.
+### Machine roles
 
-Do not run a hardware experiment from Ubuntu with `./build/...`. Hardware
-commands in this runbook use `./build-arm64/...` after SSHing into the Pi.
+| Label in this document | Machine | Purpose |
+| --- | --- | --- |
+| **Development computer** | Computer used to edit and push Git | Source changes only |
+| **Ubuntu** | `aims-Precision-7780` | Pull source, deploy, SSH, download and analyze CSV |
+| **Pi** | Go1 onboard Raspberry Pi, `192.168.12.1` | Build and run the 500 Hz hardware process |
 
-Current architecture:
+Qualisys/MOCAP is not required for this preflight.
+
+The machine changes are fixed and happen only at these points:
+
+1. Step 1 runs on the development computer and pushes the revision.
+2. Steps 2–3 run on Ubuntu and copy only the required build inputs.
+3. Steps 4–7 run in one Pi SSH session and create one hardware CSV.
+4. Steps 8–9 return to Ubuntu for analysis and exact-file cleanup.
+5. Step 10 shuts down the floor-supported robot and ends the experiment.
+
+### Preflight panic behavior
+
+- `remote-preflight` continuously sends zero-torque damping. Hearing the motors
+  engage without visible motion is expected.
+- Joystick motion is logged but does not command robot motion.
+- `L2+B` is logged during this mode and deliberately does not cause another
+  state transition.
+- A preflight fault enters damping and closes automatically after a final
+  0.5-second damping window.
+- If `PANIC DAMPING ACTIVE` appears, do not immediately run the test again.
+  Continue to Step 8, copy the CSV, analyze the first abort, and stop.
+- The abort reason is latched. Hundreds of later panic rows with the same reason
+  describe one panic episode, not hundreds of independent faults.
+
+## Step 1 — Push the current revision from the development computer
+
+Skip this step only if the current source revision is already on GitHub.
+
+The revision must include these files:
 
 ```text
-Ubuntu terminal -- SSH --> Go1 Raspberry Pi -- internal Ethernet --> motors
+CMakeLists.txt
+src/go1_lowlevel_experiment.cpp
+src/go1_kinematics.cpp
+src/go1_kinematics.hpp
+test/go1_kinematics_test.cpp
+experiment/analyze_lowlevel_log.py
+docs/GO1_LOWLEVEL_EXPERIMENT.md
 ```
 
-Planned MPPI architecture:
+From the repository root on the **development computer**, run:
 
-```text
-Qualisys --> Ubuntu MPPI/high-level controller --> reference messages
-                                              --> Pi 500 Hz controller --> motors
+```bash
+git status --short
+git add .gitignore CMakeLists.txt docs/GO1_LOWLEVEL_EXPERIMENT.md
+git diff --cached --check
+git commit -m "Clarify onboard low-level preflight workflow"
+git push origin main
 ```
 
-The Pi will retain the 500 Hz loop, watchdog, state machine, and final safety
-authority. It is not intended to become an open-loop relay.
+Do not add raw experiment CSVs, generated plots, or build directories. The
+repository ignores the local `logs/` directory.
 
-Keep the repository and `build-arm64` directory on the Pi. They do nothing when
-the executable is not running and are the intended deployment copy.
+## Step 2 — Update the Ubuntu checkout
 
-## What to do next
-
-An earlier onboard `remote-preflight` reached the required packet rate, but a
-later log exposed a false `remote_preflight_tick_invalid` panic caused by an
-inconsistent receive-thread snapshot. That race is fixed in the current source.
-
-The only hardware task currently allowed is to rebuild on the Pi and repeat
-`remote-preflight` once. Do not proceed to a standing mode.
-
-After the repeated preflight passes:
-
-1. allow `remote-preflight` to close and write its log;
-2. keep Go1 powered but fully prone on the floor;
-3. exit SSH, then copy, checksum, and analyze the CSV on Ubuntu;
-4. remove the verified copy from the Pi if disk space is needed;
-5. shut down Go1 normally while it is still prone and floor-supported;
-6. do not start `ground-handover`, squat, or a leg-lift mode;
-7. continue with software-only work on the smooth lie-down-and-exit path.
-
-`ground-handover` is the next *future experimental stage*, not the next command
-to run now. Once a tested normal exit exists, power-cycle Go1, let the factory
-controller bring it to a normal stable stand, verify the original remote, and
-then proceed to Stage 1.
-
-However, **do not run `ground-handover` yet unless one of these conditions is
-met**:
-
-1. the program has a tested smooth lie-down-and-exit path; or
-2. a reliable overhead support or person can carry the robot's full weight
-   while panic damping is activated.
-
-The current program does not automatically return control to Unitree's factory
-controller after a standing run. Normal completion and one `Ctrl-C` leave the
-robot in four-foot impedance hold. Panic damping can make a standing robot
-collapse. The unstable large Lego block is not an acceptable load-bearing
-support.
-
-The immediate next task is therefore software work: implement and dry-test the
-smooth lie-down-and-exit path. Once that is available, continue with Stage 1 in
-this document. MOCAP is not needed for this work.
-
-Progress checklist:
-
-- [x] Initial onboard prone remote preflight and remote decoding
-- [ ] Repeat onboard preflight with the receive-snapshot fix
-- [ ] Smooth lie-down-and-exit implementation and dry-run validation
-- [ ] Three ground-handover trials
-- [ ] Three squat trials
-- [ ] Three single-leg trials
-- [ ] Three four-leg-sequence trials
-
-## Safety rules and stop behavior
-
-- Use a charged battery, a flat non-slip floor, and a clear leg workspace.
-- Do not lift Go1 after power-on; doing so can invalidate contact detection and
-  cause uncontrolled leg motion.
-- Keep only one Unitree controller process running.
-- Do not turn off the battery while Go1 is standing.
-- For the first standing runs, have another person present and keep the original
-  remote within reach.
-- `--ground-confirmed`, `--remote-confirmed`, and interactive arming prompts are
-  confirmations, not physical safeguards.
-
-Current stop semantics are:
-
-| Input | Result |
-| --- | --- |
-| One `Ctrl-C` during a ground action | Cancel overlay/action, return to four-foot captured-pose hold; process does not exit |
-| `L2+B` or a second `Ctrl-C` within one second | Clear feed-forward torque and continuously send damping commands |
-| One `Ctrl-C` while panic damping is active | Continue damping for at least another 0.5 s, then close UDP, write the log, and exit |
-| Command publication stalls for more than 20 ms | Send thread overrides the stale command with damping |
-
-`L2+B` is interpreted by this program during low-level operation. It is not a
-request to the factory controller. Software damping still depends on the Pi
-process and robot control electronics; battery isolation remains the final
-physical stop.
-
-## One-time installation and build
-
-### 1. From the Ubuntu workstation: synchronize the repository
-
-Connect Ubuntu to the normal Go1 Wi-Fi network. Ubuntu only needs to reach the
-Pi at `192.168.12.1`; it does not need a route to `192.168.123.10` for this
-deployment.
+Run on **Ubuntu**:
 
 ```bash
 cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+git status --short
 git pull --ff-only
-rsync -av --exclude .git --exclude build --exclude build-arm64 \
-  ./ pi@192.168.12.1:~/Robotic-Dog-Tracking-Interface/
+git rev-parse --short HEAD
 ```
 
-If the Ubuntu checkout has uncommitted work, resolve or preserve it before
-pulling; do not discard it to force the update.
+`git status --short` must be empty before pulling. If it is not empty, preserve
+or resolve the Ubuntu changes; do not discard them to force the update.
 
-Do not copy the Ubuntu `amd64` executable to the Pi. Build an arm64 executable
-on the Pi.
+## Step 3 — Copy only the hardware build inputs to the Pi
 
-### 2. On the Raspberry Pi: build and test
+Run on **Ubuntu**, from the repository root:
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+ssh pi@192.168.12.1 'mkdir -p ~/Robotic-Dog-Tracking-Interface'
+rsync -avR \
+  ./CMakeLists.txt \
+  ./src/go1_lowlevel_experiment.cpp \
+  ./src/go1_kinematics.cpp \
+  ./src/go1_kinematics.hpp \
+  ./test/go1_kinematics_test.cpp \
+  ./externals/unitree_legged_sdk/include/ \
+  ./externals/unitree_legged_sdk/lib/cpp/arm64/ \
+  pi@192.168.12.1:~/Robotic-Dog-Tracking-Interface/
+```
+
+This command intentionally does **not** copy:
+
+- `experiment/` analysis code;
+- historical trajectory CSVs;
+- PNG/JPG plots;
+- Git history;
+- Ubuntu/macOS build directories.
+
+The analyzer stays on Ubuntu. `BUILD_SDK_EXAMPLES=OFF` allows the Pi build to
+omit Unitree's example source files as well.
+
+## Step 4 — Inspect Pi storage and old logs
+
+Run on **Ubuntu**:
 
 ```bash
 ssh pi@192.168.12.1
+```
+
+The remaining commands in Steps 4–7 run on the **Pi**. Confirm the prompt starts
+with `pi@raspberrypi`.
+
+```bash
 cd ~/Robotic-Dog-Tracking-Interface
-cmake -S . -B build-arm64 -DPYTHON_BUILD=OFF
+df -h /
+find . -maxdepth 2 -type f -name '*.csv' \
+  -printf '%TY-%Tm-%Td %TH:%TM %10s %p\n'
+```
+
+Do not delete anything during this inspection step. If `/` is at or above 90%
+use, stop here and archive old files before scheduling the hardware run.
+
+Keep the repository, `build-arm64`, SDK headers/libraries, and current
+executable on the Pi.
+
+## Step 5 — Build and run software tests on the Pi
+
+Run on the **Pi**:
+
+```bash
+cd ~/Robotic-Dog-Tracking-Interface
+cmake -S . -B build-arm64 \
+  -DPYTHON_BUILD=OFF -DBUILD_SDK_EXAMPLES=OFF
 cmake --build build-arm64 --target \
   go1_lowlevel_experiment go1_kinematics_test -j2
 ctest --test-dir build-arm64 --output-on-failure
 mkdir -p logs
-ip route get 192.168.123.10
 ```
 
-The final command should report a direct route similar to:
+All tests must pass. Do not continue after a compiler or test failure.
 
-```text
-192.168.123.10 dev eth0 src 192.168.123.161
-```
-
-If it does not, stop before running any hardware mode.
-
-### 3. Before every run: confirm there is only one controller
-
-Run this on the Pi:
+CTest creates dry-run CSVs inside `build-arm64`. They are not hardware data.
+Remove only those generated test CSVs after the tests pass:
 
 ```bash
+find build-arm64 -maxdepth 1 -type f -name 'go1_dry_*.csv' \
+  -print -delete
+```
+
+## Step 6 — Check route, processes, and UDP ports
+
+Run on the **Pi**:
+
+```bash
+ip route get 192.168.123.10
 pgrep -af 'go1_lowlevel_experiment|example_|run_torque_tracking'
 sudo ss -lunp | grep -E ':(8090|8091)\b'
 ```
 
-No experiment process should be listed and ports `8090` and `8091` should not
-have an owner; no output from the `ss` command is the expected result. Do not
-proceed if another motor-control program or socket is active. The executable
-now checks its required ports before showing the arming prompt and exits instead
-of continuing after `Address already in use`.
+Required results:
 
-## Common per-run workflow and machine boundary
+- The route resembles
+  `192.168.123.10 dev eth0 src 192.168.123.161`.
+- `pgrep` lists no active experiment or Unitree SDK example process.
+- `ss` prints nothing for ports `8090` and `8091`.
 
-1. Power and place Go1 as required by the selected stage.
-2. From Ubuntu, SSH to the Pi.
-3. **On the Pi**, run the arm64 experiment. The Pi writes the raw CSV.
-4. Watch the terminal continuously and use the stop behavior above if needed.
-5. End the program using the stage-specific safe procedure.
-6. Exit SSH and return to the **Ubuntu workstation**.
-7. **On Ubuntu**, download, verify, and analyze the CSV. Do not run the Python
-   analyzer on the Pi.
+Do not continue if a controller or socket is active. Identify its owner first;
+do not work around it by choosing a random port. The current executable also
+checks its port before showing the arming prompt.
 
-The shell prompt is the easiest way to avoid mixing the two machines:
+## Step 7 — Run one prone preflight on the Pi
 
-```text
-pi@raspberrypi:...$       C++ hardware process and raw CSV creation
-aims@aims-Precision-...$  scp, checksum, Python analysis, plots, and archive
-```
+### 7.1 Prepare the robot
 
-From Ubuntu, download and analyze a log as follows. Replace `<log>` with one
-exact filename; do not paste the angle brackets literally.
-
-```bash
-cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
-mkdir -p logs/downloaded
-ssh pi@192.168.12.1 \
-  'sha256sum ~/Robotic-Dog-Tracking-Interface/logs/<log>.csv'
-scp pi@192.168.12.1:~/Robotic-Dog-Tracking-Interface/logs/<log>.csv \
-  logs/downloaded/
-sha256sum logs/downloaded/<log>.csv
-python3 experiment/analyze_lowlevel_log.py \
-  logs/downloaded/<log>.csv --no-plots
-```
-
-The remote and local SHA-256 values must match. Never reuse a log filename for
-separate trials.
-
-### Raspberry Pi storage cleanup
-
-Raw 500 Hz CSV files are large and should not accumulate on the Pi. Inspect
-storage from Ubuntu without deleting anything:
-
-```bash
-ssh pi@192.168.12.1 'df -h / && \
-  du -sh ~/Robotic-Dog-Tracking-Interface/logs \
-         ~/Robotic-Dog-Tracking-Interface/build-arm64 2>/dev/null && \
-  find ~/Robotic-Dog-Tracking-Interface/logs -maxdepth 1 \
-       -type f -name "*.csv" -printf "%TY-%Tm-%Td %TH:%TM %10s %p\n"'
-```
-
-Delete a Pi log only after its checksum matches the Ubuntu copy and the Ubuntu
-analyzer has completed. Delete the exact file, not a wildcard:
-
-```bash
-ssh pi@192.168.12.1 \
-  'rm -- ~/Robotic-Dog-Tracking-Interface/logs/<verified-log>.csv'
-```
-
-Older logs created before the `logs/` convention may be in the repository root.
-List them first with `find ... -maxdepth 1 -type f -name "*.csv"`; apply the
-same copy, checksum, analysis, and exact-file deletion procedure. Keep the
-repository, `build-arm64`, SDK libraries, and current executable on the Pi.
-
-## Stage 0: prone remote preflight — repeat after rebuilding
-
-This stage actively sends low-level damping to all joints. It is not a passive
-receiver. Go1 must already be fully prone, with nobody near its legs.
-
-### Physical preparation
-
-1. Place Go1 belly-down with all legs correctly folded and not trapped beneath
+1. Put Go1 on a flat, non-slip floor with its abdomen fully supported.
+2. Fold all legs into the normal prone position; no leg may be trapped beneath
    the body.
-2. Turn on the original Unitree remote: press the power button once, then hold
-   it for more than two seconds.
-3. Power on the robot: press the battery button once, then hold it for more than
-   two seconds.
-4. After startup, use the factory remote to make Go1 lie down and enter the
-   prone damping state with `L2+B`.
+3. Turn on the original remote.
+4. Power on Go1 normally and wait for startup.
+5. Use the factory remote to make Go1 lie down fully and enter prone damping
+   with `L2+B`.
+6. Keep everyone clear of the legs.
 
-### Command on the Pi
+Do not lift the powered robot.
+
+### 7.2 Start the program
+
+Run on the **Pi**:
 
 ```bash
 cd ~/Robotic-Dog-Tracking-Interface
-mkdir -p logs
-./build-arm64/go1_lowlevel_experiment --mode remote-preflight \
-  --prone-confirmed --duration-s 60 \
-  --log logs/remote_preflight_onboard_fix_01.csv
+if [ -e logs/remote_preflight_fix_01.csv ]; then
+  echo 'STOP: this log filename already exists'
+else
+  echo 'OK: this log filename is unused'
+  ./build-arm64/go1_lowlevel_experiment --mode remote-preflight \
+    --prone-confirmed --duration-s 60 \
+    --log logs/remote_preflight_fix_01.csv
+fi
 ```
 
-At the prompt, type exactly:
+If the check prints `STOP`, the program will not start. First preserve the
+existing file, or use a new unique filename consistently in Steps 7–9.
+
+At the prompt type exactly:
 
 ```text
 ARM DAMPING
 ```
 
-Operate the joysticks and press `L2+B` while the program runs. The robot is not
-expected to execute factory remote motions because the program is continuously
-sending low-level damping. Judge the test by terminal fields and the CSV:
+During the 60 seconds:
 
-- joystick values must change;
-- `buttons=0x220` or `L2+B=1` must appear;
-- valid state must remain fresh.
+1. move each joystick;
+2. press `L2+B` at least once;
+3. confirm joystick values change and `L2+B=1` appears;
+4. do not expect the robot to follow joystick motion.
 
-The recorded onboard result passed:
-
-```text
-network: rate=469.63 Hz, p99_gap=4.096 ms, max_gap=8.542 ms
-remote: valid_fresh_ratio=1.000, L2+B_seen=1, lowlevel_fresh_ratio=1.000
-watchdog_cycles=0
-```
-
-The fixed build adds two analyzer diagnostics. This repeat passes only when it
-also reports:
+On success, the program exits by itself and prints the log path. Only now should
+this file exist on the Pi:
 
 ```text
-tick: duplicate_fresh=0, gap_over_20ms=0
+~/Robotic-Dog-Tracking-Interface/logs/remote_preflight_fix_01.csv
 ```
 
-In the failed log, sample 5510 copied the old `tick=332367` while observing a
-new receive sequence. It was the single trigger for
-`remote_preflight_tick_invalid`. Later `PANIC_DAMPING` rows retained the same
-latched abort reason; they were not hundreds of independent tick failures. The
-receive thread now publishes the packet and sequence under one lock, and the
-control thread copies them under that same lock.
+If panic occurs, wait for the prone preflight to close automatically. Do not
+start another run.
 
-Prone calf angles can sit slightly below the SDK's normal command boundary.
-The program accepts a small feedback-only margin in confirmed prone preflight;
-it does not enlarge the limits used for commands or standing actions.
+## Step 8 — Copy and analyze the CSV on Ubuntu
 
-### Mandatory stop after preflight
-
-On success, the program closes its UDP socket and leaves the robot physically
-prone. Do not launch a standing mode in the same boot. Keep it prone while the
-CSV is copied and checked on Ubuntu, optionally clean the verified Pi copy, and
-then shut the robot down normally while it remains floor-supported. With the
-current build, this completes the hardware session.
-
-## Stage 1: ground handover — future stage, currently blocked
-
-Only start this stage after the exit limitation in **What to do next** has been
-resolved. The goal is to verify a quiet transition from the factory standing
-controller to low-level captured-pose hold before any commanded motion.
-
-The command in this section is retained for use after that software gate is
-cleared. It is not an instruction to run it immediately after Stage 0.
-
-### Preconditions
-
-- Onboard remote preflight has passed.
-- A safe normal-exit procedure or full-weight support is available.
-- Go1 has started normally and is standing still on a flat, non-slip floor.
-- The original remote is valid and within reach.
-- No other controller process is running.
-
-### Command on the Pi
+Return to **Ubuntu**:
 
 ```bash
-cd ~/Robotic-Dog-Tracking-Interface
-./build-arm64/go1_lowlevel_experiment --mode ground-handover \
-  --ground-confirmed --log logs/ground_handover_01.csv
+exit
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+conda activate dog_ctrl
+mkdir -p logs/downloaded
+ssh pi@192.168.12.1 \
+  'sha256sum ~/Robotic-Dog-Tracking-Interface/logs/remote_preflight_fix_01.csv'
+scp pi@192.168.12.1:~/Robotic-Dog-Tracking-Interface/logs/remote_preflight_fix_01.csv \
+  logs/downloaded/
+sha256sum logs/downloaded/remote_preflight_fix_01.csv
+python3 experiment/analyze_lowlevel_log.py \
+  logs/downloaded/remote_preflight_fix_01.csv --no-plots
 ```
 
-Type `ARM` only after checking the physical scene again. The program captures a
-stable standing pose, then the first low-level packet commands that measured
-pose with impedance hold. It does not command a nominal hard-coded pose.
+The remote and local SHA-256 values must match.
 
-Run three separate handover trials before Stage 2. Each trial must satisfy:
-
-- valid feedback rate at least `450 Hz`;
-- p99 packet gap no greater than `10 ms`;
-- no packet gap greater than `20 ms`;
-- no safety or watchdog trigger;
-- no visible step, collapse, or violent motor response during takeover.
-
-### Interpreting the observed failed attempt
-
-The following output means that low-level takeover did not occur:
+The run passes only if all of these conditions hold:
 
 ```text
-[Error] Bind client ip&port failed: Address already in use
-Ground takeover aborted before low-level transmission:
-a stable high-level standing pose was not received.
+feedback rate             >= 450 Hz
+p99 feedback gap          <= 10 ms
+maximum feedback gap      <= 20 ms
+remote_valid_fresh_ratio  close to 1.0
+L2+B_seen                 1
+lowlevel_fresh_ratio      close to 1.0
+duplicate_fresh           0
+gap_over_20ms             0
+watchdog_cycles           0
+abort reasons             absent
 ```
 
-The send, receive, and control loops are started only after the high-level pose
-capture succeeds. Therefore this attempt did not send low-level standing-hold
-commands.
+The analyzer now prints the first abort sample separately. In the earlier
+failed log, only the first duplicate `tick=332367` triggered
+`remote_preflight_tick_invalid`; subsequent panic rows retained that one
+latched reason. The fixed receive path publishes the state packet and sequence
+under the same lock.
 
-The first line means another live socket owned local UDP port `8090`; a
-completed UDP process does not retain a UDP `TIME_WAIT` reservation. Before any
-future retry, inspect the owner on the Pi without killing anything:
+If any gate fails, save the Ubuntu CSV and terminal output, stop the experiment,
+and diagnose that one run offline. Do not keep repeating preflight.
+
+## Step 9 — Clean the verified hardware CSV from the Pi
+
+Perform this only after Step 8 succeeds and the Ubuntu copy opens correctly.
+Run on **Ubuntu**:
 
 ```bash
-pgrep -af 'go1_lowlevel_experiment|example_|run_torque_tracking'
-sudo ss -lunp | grep -E ':(8090|8091)\b'
+ssh pi@192.168.12.1 \
+  'rm -- ~/Robotic-Dog-Tracking-Interface/logs/remote_preflight_fix_01.csv'
+ssh pi@192.168.12.1 \
+  'find ~/Robotic-Dog-Tracking-Interface/logs -maxdepth 1 \
+   -type f -name "*.csv" -printf "%10s %p\n"'
 ```
 
-Do not work around this by choosing a random local port until the owner is
-identified. It may indicate that another robot controller is still active. The
-current build probes both required local ports before arming, so this condition
-now exits without constructing an SDK controller or asking for `ARM`.
+The first command deletes only the exact verified Pi copy. The archived Ubuntu
+copy remains in `logs/downloaded/`.
 
-The high-level capture failure separately means the program did not collect
-100 consecutive valid, stable `HIGHLEVEL` state packets from
-`192.168.123.161:8082`. Running this directly after prone low-level preflight,
-without a full shutdown and normal factory-controlled restart, is not a valid
-handover setup. The current program reports only the aggregate failure, so this
-message alone cannot distinguish a missing endpoint from rejected state data.
+For an older CSV stored in the Pi repository root, use the same sequence:
+copy it, compare checksums, analyze it on Ubuntu, and delete only its exact
+filename. Never use `rm *.csv`, and never delete `build-arm64` or the SDK.
 
-## Stage 2: squat and return
+## Step 10 — Shut down and stop
 
-Start only after three successful handover trials and a safe normal-exit method.
-The action uses four-leg impedance control: three seconds down, two seconds
-hold, and three seconds return. Default offsets are `+0.12 rad` at each thigh
-and `-0.24 rad` at each calf.
+Go1 should still be fully prone. Shut it down using the normal battery shutdown
+procedure while it remains floor-supported.
 
-```bash
-cd ~/Robotic-Dog-Tracking-Interface
-./build-arm64/go1_lowlevel_experiment --mode squat \
-  --ground-confirmed --log logs/squat_01.csv
-```
+After one successful fixed preflight, mark the preflight gate complete. Do not
+repeat it again unless code affecting UDP reception, state freshness, remote
+decoding, damping, watchdog, or panic handling changes.
 
-Complete three trials before Stage 3. Acceptance criteria are:
+There is no standing hardware step in the current runbook. The next task is
+software-only implementation and dry-run review of a smooth lie-down-and-exit
+path. This document must be extended with a new numbered procedure before any
+standing experiment is authorized.
 
-- no protection or watchdog trigger;
-- joint tracking RMS below `0.08 rad`;
-- final pose error below `0.05 rad`;
-- roll and pitch excursions below `0.15 rad`.
+## Reference: why control runs onboard
 
-## Stage 3: one automatically selected leg
+The onboard run measured approximately `469.63 Hz`, with a `4.096 ms` p99 gap
+and an `8.542 ms` maximum gap. A previous Ubuntu-direct Wi-Fi run measured only
+`339.42 Hz` and a `142.002 ms` maximum gap. Therefore the Pi owns the 500 Hz
+motor loop, watchdog, and safety state machine. Ubuntu owns analysis and future
+MPPI/Qualisys integration.
 
-Start only after three successful squat trials. This is a mixed-impedance
-motion test, not a pure-torque frequency-response test. The controller shifts
-the body toward the three-foot support polygon, unloads the selected foot,
-lifts it by 20 mm, and applies a small torque overlay to the airborne thigh.
-
-```bash
-cd ~/Robotic-Dog-Tracking-Interface
-./build-arm64/go1_lowlevel_experiment --mode leg-lift \
-  --leg auto --lift-height-m 0.02 \
-  --tau-overlay-nm 0.10 --tau-overlay-hz 0.5 \
-  --ground-confirmed --remote-confirmed \
-  --log logs/leg_lift_auto_01.csv
-```
-
-Stop and return to four-foot hold if the support margin decreases, the target
-foot does not unload, the IMU excursion approaches its limit, or any feedback
-becomes stale. Complete three successful trials before Stage 4.
-
-## Stage 4: four-leg sequence
-
-This stage repeats the support and contact checks before every leg. It is
-allowed only after three successful Stage 3 trials.
-
-```bash
-cd ~/Robotic-Dog-Tracking-Interface
-./build-arm64/go1_lowlevel_experiment --mode leg-lift-sequence \
-  --leg auto --lift-height-m 0.02 \
-  --tau-overlay-nm 0.10 --tau-overlay-hz 0.5 \
-  --ground-confirmed --remote-confirmed \
-  --log logs/leg_lift_sequence_01.csv
-```
-
-The sequence passes only if every foot unloads, lifts, and recontacts normally,
-the support margin remains valid, and no protection or watchdog trigger occurs.
-
-## Hardware gates enforced by the program
-
-The controller runs a 2 ms control period and checks, among other conditions:
-
-- valid and fresh `LowState` packets and an advancing `state.tick`;
-- `levelFlag == LOWLEVEL` after takeover;
-- finite joint feedback, motor mode, and temperature;
-- command and manufacturer joint limits;
-- command torque at or below the configured first-stage limit;
-- communication staleness, joint speed, roll/pitch, and foot-force conditions;
-- `PositionLimit` and `PowerProtect(..., 1)` on every normal command.
-
-Hard faults clear `tau_ff` and enter persistent damping. Ground-action faults
-cancel the action and return to captured four-foot hold when that is the safer
-available response.
-
-## Logs and analysis
-
-The Pi creates the raw CSV; Ubuntu downloads, checksums, analyzes, plots, and
-archives it. Every 2 ms cycle records host time, state tick, phase,
-receive/send status, loop timing, remote input, stop source, watchdog state,
-IMU, foot force, support margin, command fields, and joint feedback.
-
-For each joint, interpret torque tracking using the total commanded torque:
+For future work, the intended split is:
 
 ```text
-tau_cmd_total = tau_ff + Kp * (q_des - q) + Kd * (dq_des - dq)
+Qualisys -> Ubuntu MPPI -> lower-rate references -> Pi 500 Hz safety loop -> Go1
 ```
 
-Do not compare `tauEst` only with `tau_ff` during impedance actions. The Python
-analyzer reports communication timing, motion limits, remote validity, support
-metrics, abort reasons, and torque alignment. Plot generation can be enabled by
-omitting `--no-plots`.
-
-`recv_ok=1` means the control loop consumed a newly published state snapshot;
-it does not merely mean that `UDP::Recv()` returned zero. A valid log must have
-`fresh_tick_duplicate_count=0` and
-`fresh_tick_gap_over_20ms_count=0`. The analyzer prints these as
-`duplicate_fresh` and `gap_over_20ms`, and prints the first sample that latched
-an abort. Because abort state is latched, all later panic rows keep the same
-reason; count the first abort as the trigger rather than treating every panic
-row as a new fault.
-
-## MOCAP and future MPPI boundary
-
-MOCAP is not an input to `remote-preflight`, `ground-handover`, squat, or the
-initial leg-lift experiments. Encoders, IMU, estimated joint torque, foot force,
-and the remote are sufficient for these local state machines.
-
-Qualisys may be recorded as independent ground truth. In the future, Qualisys
-and MPPI can run on Ubuntu and send lower-rate reference commands to the Pi.
-MOCAP delay or loss must not be allowed to bypass the Pi's local 500 Hz safety
-loop or become a requirement for fast balance.
-
-## Appendix A: legacy Ubuntu-direct network test
-
-This appendix explains earlier logs; it is not the current operating procedure.
-
-The Ubuntu workstation had both the wired MOCAP network and Go1 Wi-Fi active:
-
-```text
-enp0s31f6  192.168.1.167/24   wired MOCAP network
-wlp0s20f3  192.168.12.20/24   Go1 Wi-Fi
-Go1 Pi     192.168.12.1       Wi-Fi/robot gateway
-controller 192.168.123.10     robot internal low-level endpoint
-```
-
-A default-route change was initially used, but it is not appropriate for the
-split-network workstation. A narrow route was required to test Ubuntu-direct
-access without diverting MOCAP traffic:
-
-```bash
-sudo ip route replace 192.168.123.0/24 \
-  via 192.168.12.1 dev wlp0s20f3 src 192.168.12.20
-```
-
-That route made the endpoint reachable, but the measured Wi-Fi low-level rate
-and maximum gap failed the gate. Do not restore Ubuntu-direct hardware control
-unless a new 60-second qualification produces at least `450 Hz`, p99 at most
-`10 ms`, and no single gap over `20 ms`. Even then, onboard execution remains
-the preferred deployment.
-
-## Appendix B: offline development
-
-`--dry-run` does not open UDP and may run on a development machine. For example:
-
-```bash
-./build/go1_lowlevel_experiment --dry-run --mode leg-lift \
-  --leg auto --ground-confirmed --remote-confirmed \
-  --log leg_lift_dry.csv
-python3 experiment/analyze_lowlevel_log.py leg_lift_dry.csv --no-plots
-```
-
-Dry-run validates reference generation, state-machine sequencing, and log
-format only. It cannot validate firmware mode switching, robot networking,
-remote delivery, motor response, or physical stability.
+MOCAP is optional ground truth and must not be required by the fast motor loop.
