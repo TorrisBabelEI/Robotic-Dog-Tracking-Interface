@@ -1117,8 +1117,8 @@ void requireUdpPortAvailable(uint16_t port, const char *purpose) {
     throw std::runtime_error(
         std::string(purpose) + " local UDP port " + std::to_string(port) +
         " is unavailable: " + detail +
-        ". Inspect it with: sudo ss -lunp | grep ':" +
-        std::to_string(port) + "\\b'");
+        ". Inspect every UDP state with: sudo ss -uanp; then identify the "
+        "owner with: sudo fuser -v " + std::to_string(port) + "/udp");
   }
   ::close(socketFd);
 }
