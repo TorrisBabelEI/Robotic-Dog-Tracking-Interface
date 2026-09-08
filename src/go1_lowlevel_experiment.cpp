@@ -3,6 +3,7 @@
  * Hardware access is Linux-only; every state and profile is dry-runnable.
  *********************************************************************/
 #include "go1_kinematics.hpp"
+#include "go1_log_file.hpp"
 
 #include <algorithm>
 #include <array>
@@ -1577,6 +1578,8 @@ int main(int argc, char **argv) {
     std::signal(SIGINT, signalHandler); std::signal(SIGTERM, signalHandler);
     if (options.dryRun) return runDry(options);
 #if defined(GO1_WITH_SDK)
+    if (!go1::confirmLogOverwrite(options.logPath, std::cin, std::cout) ||
+        gSignalCount > 0) return 130;
     validateHardwarePorts(options);
     { std::ofstream probe(options.logPath.c_str(), std::ios::out | std::ios::app);
       if (!probe) throw std::runtime_error("cannot write log path: " + options.logPath); }

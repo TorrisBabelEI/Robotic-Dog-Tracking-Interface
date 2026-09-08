@@ -1,12 +1,36 @@
-# Go1 low-level experiment: step-by-step runbook
+# Go1 low-level experiments: staged operating manual
 
-This is an operating checklist, not a design note. Follow the numbered steps
-in order. Do not skip a gate, and stop whenever a required result is missing.
+Each experiment has its own chapter. Complete the previous chapter's hardware
+acceptance before starting the next chapter's hardware test. Simulation results
+do not count as hardware acceptance.
 
-## Read this before starting
+| Chapter | Experiment | Current status |
+| --- | --- | --- |
+| [1](#chapter-1--remote-preflight) | Communication and remote preflight | Reported passing run: `remote_preflight_fix_02.csv` |
+| [2](#chapter-2--ground-handover) | Standing takeover and 10-second hold | Dry-run available; hardware entry and normal exit unresolved |
+| [3](#chapter-3--squat-and-return) | Four-leg half-squat and return | Dry-run available; requires Chapter 2 hardware acceptance |
+| [4](#chapter-4--single-leg-lift) | Weight transfer and one leg lift | Dry-run available; requires Chapter 3 hardware acceptance |
+| [5](#chapter-5--four-leg-sequence) | Four sequential leg lifts | Dry-run available; requires Chapter 4 hardware acceptance |
 
-The only currently authorized hardware task is one 60-second, prone
-`remote-preflight` run using the standard Unitree low-level UDP path:
+**Next action after the passing preflight:** use Chapter 2's software rehearsal.
+The hardware command references in Chapters 2–5 document the existing CLI;
+they are not cleared for floor testing with the current executable. There is
+no implemented normal lie-down-and-exit command yet. The existing CLI accepts
+these modes, so this restriction is procedural, not an executable lock.
+
+## Common setup and operating rules
+
+The reported `remote_preflight_fix_02.csv` run passed the preflight metrics:
+497.90 Hz feedback, 2.193 ms p99 gap, 10.762 ms maximum gap, valid remote and
+low-level ratios of 1.000, L2+B observed, zero duplicate fresh ticks, zero
+gaps over 20 ms, zero watchdog cycles, and no reported abort. Preserve that
+CSV on Ubuntu and compare its SHA-256 with the Pi original before deleting
+the Pi copy. This completes the communication/remote preflight gate; it does
+not validate standing actions. No new hardware run is needed solely to test
+the log-overwrite prompt.
+
+The numbered procedure below is retained for a future required 60-second,
+prone `remote-preflight` run. It uses the C++ example's local UDP port:
 
 ```text
 Go1 onboard Pi local UDP 8090 -> 192.168.123.10:8007
@@ -45,9 +69,10 @@ The module supplies Unitree's GUI/Blockly/MQTT programming interface. It is not
 a core leg-control process, but importing its high-level robot interface claims
 local UDP 8090 even while no Blockly program is running.
 
-Changing this experiment to an arbitrary free source port is not a valid
-workaround. A preflight from local 8092 returned only about `0.54 Hz`, whereas
-the SDK's standard low-level path uses local 8090. The procedure therefore
+An earlier preflight from local 8092 returned only about `0.54 Hz`; that
+observation alone does not prove that the firmware requires source port 8090.
+The reported passing run used the current 8090 procedure. We therefore retain
+that configuration for reproducibility. The procedure
 temporarily stops only `programming.py`, runs one prone preflight on 8090, and
 then immediately restores the module with its own Unitree wrapper:
 
@@ -85,7 +110,51 @@ Only its `programming.py` child is in scope.
   the robot clear, let the process close, preserve that CSV, and continue to
   the recovery and analysis steps.
 
-## Step 1 — Push the revision from the development computer
+### Shared rules for Chapters 2–5
+
+- Build and deploy using Chapter 1, Steps 1, 3–6. Do not rerun the completed
+  preflight solely because you are preparing another experiment. Update Ubuntu
+  from GitHub while Internet access is available, before connecting to Go1 Wi-Fi
+  if the Wi-Fi does not provide Internet access.
+- The software rehearsal commands run on the **Pi** after SSH, and all include
+  `--dry-run`; they do not open robot UDP sockets. Create `logs/dry-run` first.
+- Download every dry-run or hardware CSV to **Ubuntu**. Run the Python analyzer
+  only there. Keep simulated and hardware files in separate directories.
+- For hardware, run only one experiment at a time. Archive and evaluate its
+  result before the next repetition. Reusing a Pi filename is allowed after
+  archiving; the hardware executable asks before replacing an existing file.
+- A successful analyzer process exit is not a pass certificate. Review the
+  metrics, abort reasons, and actual phase sequence against the chapter's gates.
+- Restore the Programming Module only after the experiment has closed and the
+  robot is floor-supported. Use Chapter 1, Step 11; do not restore it while the
+  experiment still owns UDP 8090.
+- `SAFE_HOLD` means continued standing control. It does not mean prone, motor
+  power off, process exit, or control returned to the factory controller.
+- In hardware ground modes, single Ctrl-C requests return to the captured
+  pose and continued hold. `L2+B` or two Ctrl-C presses within one second
+  requests damping. A further Ctrl-C in panic requests exit after the damping
+  window. These are fault responses, not a normal standing shutdown procedure.
+
+### Download and analyze each Chapter 2–5 rehearsal
+
+Each chapter gives a **Pi command** and a corresponding **Ubuntu block**. Open
+a second Ubuntu terminal for download/analysis, keeping the Pi terminal clear.
+The download block creates a unique local directory; it never overwrites an
+earlier archive. It does not remove the Pi file. After checking the remote and
+local hashes and opening the archive, you may remove that exact Pi file using
+the same copy/verify/delete rule as Chapter 1, Step 13.
+
+For eventual hardware runs, the same workflow applies with `logs/<mode>.csv`
+as the remote path and `logs/downloaded` as the Ubuntu archive parent. Do not
+label a `logs/dry-run` file as a hardware result.
+
+## Chapter 1 — Remote preflight
+
+Status: passed based on the supplied `remote_preflight_fix_02.csv` summary.
+The full original procedure is retained below for reproducibility. Proceed to
+Chapter 2 for the next experiment; do not restart this chapter by default.
+
+### Step 1 — Push the revision from the development computer
 
 Skip this step only if the revision containing this document and the current
 experiment source is already on GitHub.
@@ -98,6 +167,8 @@ git add CMakeLists.txt \
   src/go1_lowlevel_experiment.cpp \
   src/go1_kinematics.cpp \
   src/go1_kinematics.hpp \
+  src/go1_log_file.hpp \
+  test/go1_log_file_test.cpp \
   test/go1_kinematics_test.cpp \
   docs/GO1_LOWLEVEL_EXPERIMENT.md
 git diff --cached --check
@@ -109,7 +180,7 @@ git push origin main
 Review the staged files before committing. Do not add raw CSVs, plots, or build
 directories.
 
-## Step 2 — Power Go1, put it prone, and connect Ubuntu
+### Step 2 — Power Go1, put it prone, and connect Ubuntu
 
 Complete these physical and network steps in order:
 
@@ -143,7 +214,7 @@ Do not replace Ubuntu's default route for this onboard workflow. The 500 Hz
 process will run on the Pi, which reaches `192.168.123.10` directly over its
 internal Ethernet.
 
-## Step 3 — Update the Ubuntu checkout
+### Step 3 — Update the Ubuntu checkout
 
 Run on **Ubuntu**:
 
@@ -157,7 +228,7 @@ git rev-parse --short HEAD
 `git status --short` must be empty before pulling. If it is not empty, preserve
 or resolve those changes; do not discard them just to force the pull.
 
-## Step 4 — Copy only build inputs from Ubuntu to the Pi
+### Step 4 — Copy only build inputs from Ubuntu to the Pi
 
 Run on **Ubuntu**, from the repository root:
 
@@ -169,6 +240,8 @@ rsync -avR \
   ./src/go1_lowlevel_experiment.cpp \
   ./src/go1_kinematics.cpp \
   ./src/go1_kinematics.hpp \
+  ./src/go1_log_file.hpp \
+  ./test/go1_log_file_test.cpp \
   ./test/go1_kinematics_test.cpp \
   ./externals/unitree_legged_sdk/include/ \
   ./externals/unitree_legged_sdk/lib/cpp/arm64/ \
@@ -179,7 +252,7 @@ This intentionally does not copy `experiment/`, analysis summaries, plots,
 historical CSVs, Git history, or workstation build directories. The Python
 analyzer remains on Ubuntu.
 
-## Step 5 — Open one Pi SSH session and inspect storage
+### Step 5 — Open one Pi SSH session and inspect storage
 
 Run on **Ubuntu**:
 
@@ -203,7 +276,7 @@ Do not delete anything during inspection. If `/` is at or above 90% use, stop
 and archive specific old logs before continuing. Keep the repository,
 `build-arm64`, SDK headers/libraries, and experiment executable.
 
-## Step 6 — Build and run all software tests on the Pi
+### Step 6 — Build and run all software tests on the Pi
 
 Run on the **Pi**:
 
@@ -212,19 +285,19 @@ cd ~/Robotic-Dog-Tracking-Interface
 cmake -S . -B build-arm64 \
   -DPYTHON_BUILD=OFF -DBUILD_SDK_EXAMPLES=OFF
 cmake --build build-arm64 --target \
-  go1_lowlevel_experiment go1_kinematics_test -j2
+  go1_lowlevel_experiment go1_kinematics_test go1_log_file_test -j2
 (cd build-arm64 && ctest --output-on-failure)
 mkdir -p logs
 find build-arm64 -maxdepth 1 -type f -name 'go1_dry_*.csv' \
   -print -delete
 ```
 
-All 17 tests must pass. The parenthesized `cd` form is intentional: the older
+All 18 tests must pass. The parenthesized `cd` form is intentional: the older
 CTest on the Pi does not support `ctest --test-dir` and can otherwise report
 `No tests were found`. The final command deletes only test-generated dry-run
 CSVs.
 
-## Step 7 — Check the low-level route and controller processes
+### Step 7 — Check the low-level route and controller processes
 
 Run on the **Pi**:
 
@@ -252,7 +325,7 @@ socket that caused the earlier false conclusion that 8090 was free.
 
 If the process and UDP owner do not agree, stop here. Do not kill anything.
 
-## Step 8 — Reconfirm the prone damping state
+### Step 8 — Reconfirm the prone damping state
 
 The robot should have remained prone throughout deployment and building.
 Immediately before changing the port owner, visually confirm all of the
@@ -266,7 +339,7 @@ following again:
 
 Do not proceed if Go1 is standing or its state is uncertain.
 
-## Step 9 — Temporarily stop only Unitree programming.py
+### Step 9 — Temporarily stop only Unitree programming.py
 
 Run the following block on the **Pi**. Its exact process pattern and one-PID
 gate prevent reuse of a stale PID:
@@ -320,15 +393,13 @@ If `programming.py` reappears or the bind probe reports `BUSY`, do not kill it
 again and do not run preflight. Restore/check the Unitree desktop session and
 stop the experiment.
 
-## Step 10 — Run exactly one prone preflight on standard port 8090
+### Step 10 — Run exactly one prone preflight on standard port 8090
 
 Run on the **Pi**:
 
 ```bash
 cd ~/Robotic-Dog-Tracking-Interface
-if [ -e logs/remote_preflight_fix_01.csv ]; then
-  echo 'STOP: logs/remote_preflight_fix_01.csv already exists'
-elif pgrep -f "$PROGRAMMING_PATTERN" >/dev/null; then
+if pgrep -f "$PROGRAMMING_PATTERN" >/dev/null; then
   echo 'STOP: programming.py has reclaimed UDP 8090'
 else
   ./build-arm64/go1_lowlevel_experiment --mode remote-preflight \
@@ -338,8 +409,23 @@ else
 fi
 ```
 
-If the file already exists, preserve it or choose a new unique name and use
-that same name in all later steps. Do not overwrite a previous hardware log.
+You can reuse the same log filename. If it exists, the executable asks before
+arming or starting UDP:
+
+```text
+Log already exists: logs/remote_preflight_fix_01.csv
+Replace it with this run's log when the run finishes? [y/N]:
+```
+
+Enter `y` or `yes` to approve replacement. Enter `n`, press Enter, or send EOF
+to cancel: the old file stays intact and no motor commands are sent. After
+approval, the usual `ARM DAMPING` confirmation still follows. The old file is
+not truncated by either prompt; it is replaced when this run writes its log,
+including a failed run. Archive any result you want to keep before approving.
+Hardware confirmation does not change automated `--dry-run` output behavior.
+
+If you cancel after stopping the Programming Module, proceed directly to
+Step 11 to restore it. Do not analyze the old CSV as though it were a new run.
 
 At the prompt type exactly:
 
@@ -363,7 +449,7 @@ Confirm that the log exists:
 ls -lh logs/remote_preflight_fix_01.csv
 ```
 
-## Step 11 — Restore the Unitree Programming Module immediately
+### Step 11 — Restore the Unitree Programming Module immediately
 
 Keep Go1 fully prone. Run on the **Pi**:
 
@@ -408,7 +494,7 @@ ssh pi@192.168.12.1 \
 If it did not survive logout, reconnect, keep Go1 prone, rerun the vendor
 wrapper once, and diagnose that restoration before doing anything else.
 
-## Step 12 — Copy and analyze the raw CSV on Ubuntu
+### Step 12 — Copy and analyze the raw CSV on Ubuntu
 
 Run on **Ubuntu**:
 
@@ -416,16 +502,19 @@ Run on **Ubuntu**:
 cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
 conda activate dog_ctrl
 mkdir -p logs/downloaded
+GO1_ARCHIVE_DIR=$(mktemp -d logs/downloaded/preflight-XXXXXXXX)
 ssh pi@192.168.12.1 \
   'sha256sum ~/Robotic-Dog-Tracking-Interface/logs/remote_preflight_fix_01.csv'
 scp pi@192.168.12.1:~/Robotic-Dog-Tracking-Interface/logs/remote_preflight_fix_01.csv \
-  logs/downloaded/
-sha256sum logs/downloaded/remote_preflight_fix_01.csv
+  "$GO1_ARCHIVE_DIR/"
+sha256sum "$GO1_ARCHIVE_DIR/remote_preflight_fix_01.csv"
 python3 experiment/analyze_lowlevel_log.py \
-  logs/downloaded/remote_preflight_fix_01.csv --no-plots
+  "$GO1_ARCHIVE_DIR/remote_preflight_fix_01.csv" --no-plots
 ```
 
 The Pi and Ubuntu SHA-256 values must match. The analyzer runs only on Ubuntu.
+The automatically named Ubuntu archive directory preserves earlier downloads
+even when you reuse the same Pi filename. Keep the printed archive path.
 
 The run passes only if all of these conditions hold:
 
@@ -449,7 +538,7 @@ The current receive path copies the packet and sequence under the same lock.
 If any gate fails, keep the Ubuntu CSV and complete terminal output, then stop.
 Diagnose that one run offline instead of repeating preflight.
 
-## Step 13 — Delete only the verified Pi copy
+### Step 13 — Delete only the verified Pi copy
 
 Perform this only after the checksum matches, the Ubuntu file opens, and the
 analysis command completes. Run on **Ubuntu**:
@@ -469,7 +558,7 @@ SDK.
 For an older Pi CSV, first copy that exact file, compare checksums, and inspect
 the Ubuntu copy. Only then delete that exact Pi pathname.
 
-## Step 14 — Shut down and end the experiment
+### Step 14 — Shut down and end the experiment
 
 Confirm Go1 remains fully prone and floor-supported. Shut it down with the
 normal battery shutdown procedure. Do not power it off while standing.
@@ -478,10 +567,301 @@ After one passing run, the prone preflight gate is complete. Do not run it
 again unless code affecting UDP reception, state freshness, remote decoding,
 damping, watchdog, or panic handling changes.
 
-There is no standing hardware step in this runbook yet. The next development
-task is software-only implementation and dry-run review of a smooth
-lie-down-and-exit path. Add and review that path before enabling
-`ground-handover` or later actions.
+Continue to Chapter 2's software rehearsal. Standing hardware operation remains
+pending the entry and exit requirements below.
+
+## Chapter 2 — Ground handover
+
+Purpose: verify that taking over a stable standing robot does not introduce a
+position jump, then hold its captured pose for 10 seconds. No squat or leg lift
+is requested. This is the first intended hardware experiment after preflight.
+
+### 2.1 Entry and exit requirements before hardware
+
+The current program first requests a stable high-level standing pose through
+Pi local UDP 8091 to `192.168.123.161:8082`, then starts low-level commands on
+8090 to `192.168.123.10:8007`. This transition has not been validated on this
+robot. A passing prone low-level preflight does not validate it.
+
+Before floor execution, the implementation and operating procedure must provide:
+
+1. A verified way to reach and capture the standing start state while releasing
+   8090 from the Programming Module. Do not simply repeat the prone preflight's
+   mode-switch sequence and then expect this command to stand the robot up.
+2. Continuous support during high-level to low-level takeover, including the
+   first low-level feedback interval. If high-level capture fails, investigate
+   that entry path; do not bypass the capture check.
+3. A normal endpoint that lowers the robot to a verified floor-supported prone
+   pose, enters damping, writes the log, and exits. This is **not implemented**.
+   The current +/-0.3 rad action limit and standing joint limits also need
+   explicit treatment for a full lie-down; changing a target alone is not enough.
+4. Software tests for normal completion, operator cancellation, and loss of
+   feedback during that endpoint, followed by a reviewed first-hardware procedure.
+
+Until these are complete, perform only 2.2–2.3. Do not improvise an exit with
+double Ctrl-C, a factory remote command during takeover, or battery removal.
+No reliable support rig has been established for this setup.
+
+### 2.2 Rehearse on the Pi now
+
+In the **Pi SSH terminal**:
+
+```bash
+cd ~/Robotic-Dog-Tracking-Interface
+mkdir -p logs/dry-run
+./build-arm64/go1_lowlevel_experiment --dry-run --mode ground-handover \
+  --log logs/dry-run/ground_handover.csv
+sha256sum logs/dry-run/ground_handover.csv
+```
+
+The simulated phase sequence is `PRECHECK -> CAPTURE_POSE -> HOLD ->
+GROUND_HANDOVER -> RETURN -> SAFE_HOLD -> COMPLETE`. The dedicated hold lasts
+10 seconds, in addition to precheck, initial hold, and return. `--duration-s`
+does not change this mode's fixed hold time. Dry-run automatically leaves
+`SAFE_HOLD` after two seconds; hardware does not.
+
+### 2.3 Download and inspect on Ubuntu
+
+In an **Ubuntu terminal**, not the Pi SSH terminal:
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+conda activate dog_ctrl
+mkdir -p logs/dry-run
+GO1_REVIEW_DIR=$(mktemp -d logs/dry-run/handover-XXXXXXXX)
+scp pi@192.168.12.1:~/Robotic-Dog-Tracking-Interface/logs/dry-run/ground_handover.csv \
+  "$GO1_REVIEW_DIR/"
+sha256sum "$GO1_REVIEW_DIR/ground_handover.csv"
+python3 experiment/analyze_lowlevel_log.py \
+  "$GO1_REVIEW_DIR/ground_handover.csv"
+```
+
+Compare this hash with 2.2. Inspect the summary and plots printed by the analyzer.
+Check that commanded positions stay at the captured pose during
+`GROUND_HANDOVER` and feed-forward torque stays zero. Synthetic timing and
+tracking do not predict actual takeover behavior or validate normal shutdown.
+
+### 2.4 Hardware test reference — pending 2.1
+
+Existing Pi CLI, **not an executable instruction for the current floor setup**:
+
+```text
+./build-arm64/go1_lowlevel_experiment --mode ground-handover \
+  --ground-confirmed --local-port 8090 --high-local-port 8091 \
+  --log logs/ground_handover.csv
+```
+
+Once 2.1 is implemented and this procedure updated, each run must include the
+complete chain: verified standing entry, takeover, 10-second hold, normal
+lie-down, process exit, Programming Module restoration, Ubuntu download and
+analysis. Perform one run at a time; require three passing runs before Chapter 3.
+
+Acceptance targets: no abrupt leg or body movement, no unexpected protection,
+no watchdog event, all-joint `position_rms_rad < 0.08`,
+`return_error_rad < 0.05`, and roll/pitch excursions below 0.15 rad. Retain the
+preflight communication thresholds (>=450 Hz, p99 <=10 ms, maximum gap <=20 ms).
+The return error currently measures return to standing, not success of a future
+lie-down endpoint. That endpoint needs its own final-pose/contact acceptance.
+
+Dedicated stop tests are separate from normal passing runs: a commanded
+`remote_l2_b` panic is expected in a remote-stop test, but is a failed normal
+action run. Receiving `L2+B` during preflight did not measure an actual switch
+from position hold to damping. Verify that response with appropriate support
+before relying on it during a leg lift.
+
+## Chapter 3 — Squat and return
+
+Purpose: exercise all four legs with slow impedance-controlled motion while
+keeping four-foot contact. Hardware prerequisite: Chapter 2's complete entry,
+hold, and normal exit passed three times.
+
+### 3.1 Rehearse on the Pi now
+
+In the **Pi SSH terminal**:
+
+```bash
+cd ~/Robotic-Dog-Tracking-Interface
+mkdir -p logs/dry-run
+./build-arm64/go1_lowlevel_experiment --dry-run --mode squat \
+  --log logs/dry-run/squat.csv
+sha256sum logs/dry-run/squat.csv
+```
+
+After capture and initial hold, the action takes eight seconds: three seconds
+down, two seconds held, three seconds back. All thighs move +0.12 rad and calves
+-0.24 rad relative to capture; hips stay fixed. A two-second return phase then
+leads to `SAFE_HOLD`. This is joint-space motion, not a calibrated body-height
+command, and `--duration-s` does not change its timing.
+
+### 3.2 Download and inspect on Ubuntu
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+conda activate dog_ctrl
+mkdir -p logs/dry-run
+GO1_REVIEW_DIR=$(mktemp -d logs/dry-run/squat-XXXXXXXX)
+scp pi@192.168.12.1:~/Robotic-Dog-Tracking-Interface/logs/dry-run/squat.csv \
+  "$GO1_REVIEW_DIR/"
+sha256sum "$GO1_REVIEW_DIR/squat.csv"
+python3 experiment/analyze_lowlevel_log.py "$GO1_REVIEW_DIR/squat.csv"
+```
+
+Compare hashes. Check smooth symmetric thigh/calf targets, position tracking,
+return error, IMU excursions, and foot forces. This action has no intended
+feed-forward torque excitation, so a torque-correlation threshold is not its
+acceptance criterion.
+
+### 3.3 Hardware test reference — pending Chapter 2
+
+```text
+./build-arm64/go1_lowlevel_experiment --mode squat \
+  --ground-confirmed --local-port 8090 --high-local-port 8091 \
+  --log logs/squat.csv
+```
+
+The current executable ends at standing `SAFE_HOLD`; do not run this hardware
+command until Chapter 2's normal exit is implemented for this mode as well.
+Use the verified entry/exit and archive cycle for each repetition. Require three
+normal runs with all four feet maintaining contact, no protection or watchdog,
+all-joint `position_rms_rad < 0.08`, `return_error_rad < 0.05`, and roll/pitch
+excursions <0.15 rad. Communication must meet Chapter 2's thresholds. Review
+each run before repeating. Only then proceed to Chapter 4 hardware testing.
+
+## Chapter 4 — Single-leg lift
+
+Purpose: test weight transfer, one small leg lift, and confirmed touchdown.
+Hardware prerequisites: three passing squats, a verified stop response, and
+adequate fall protection with another person present for the initial test.
+Three contacting feet alone do not guarantee static stability. The estimated
+CoP margin is a load-distribution check, not a complete stability guarantee.
+
+### 4.1 Rehearse on the Pi now
+
+```bash
+cd ~/Robotic-Dog-Tracking-Interface
+mkdir -p logs/dry-run
+./build-arm64/go1_lowlevel_experiment --dry-run --mode leg-lift \
+  --leg auto --lift-height-m 0.02 \
+  --tau-overlay-nm 0.10 --tau-overlay-hz 0.5 \
+  --log logs/dry-run/leg_lift.csv
+sha256sum logs/dry-run/leg_lift.csv
+```
+
+Expected action sequence:
+
+1. Collect two seconds of foot-force baseline and select the candidate leg with
+   the largest estimated support margin; initially hold for one second.
+2. Shift the body target over two seconds, limited to 30 mm.
+3. Permit lift only after margin >=15 mm and target-foot load <=30% of baseline
+   have held for 0.5 seconds.
+4. Lift the target foot 20 mm over 1.5 seconds, hold for one second, then lower
+   over 1.5 seconds. During air hold, add 0.10 Nm at 0.5 Hz to its thigh.
+5. Confirm target-foot force >=60% of baseline for 0.5 seconds (verification
+   times out after 1.5 seconds), then recenter over two seconds.
+6. Return to the captured pose and enter `SAFE_HOLD`.
+
+The overlay's one-second window at 0.5 Hz covers only half a sine cycle. It is
+an action-chain/torque-channel smoke test, not a zero-mean periodic experiment
+or a torque frequency-response measurement.
+
+### 4.2 Download and inspect on Ubuntu
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+conda activate dog_ctrl
+mkdir -p logs/dry-run
+GO1_REVIEW_DIR=$(mktemp -d logs/dry-run/leg-lift-XXXXXXXX)
+scp pi@192.168.12.1:~/Robotic-Dog-Tracking-Interface/logs/dry-run/leg_lift.csv \
+  "$GO1_REVIEW_DIR/"
+sha256sum "$GO1_REVIEW_DIR/leg_lift.csv"
+python3 experiment/analyze_lowlevel_log.py "$GO1_REVIEW_DIR/leg_lift.csv"
+```
+
+Compare hashes and inspect `active_leg`, foot targets, force baselines, CoP,
+support margins, and the full phase sequence. Check torque against
+`tau_cmd_total = tau_ff + Kp*(qd-q) + Kd*(dqd-dq)`; `tauEst` includes the
+impedance contribution and loading effects.
+
+### 4.3 Hardware test reference — pending Chapters 2–3
+
+```text
+./build-arm64/go1_lowlevel_experiment --mode leg-lift \
+  --leg auto --lift-height-m 0.02 \
+  --tau-overlay-nm 0.10 --tau-overlay-hz 0.5 \
+  --ground-confirmed --remote-confirmed \
+  --local-port 8090 --high-local-port 8091 --log logs/leg_lift.csv
+```
+
+Use the verified standing entry and normal exit, once available for this mode.
+Require three complete passing single-leg trials before Chapter 5. Record the
+actual selected leg each time; `auto` may choose a different leg when loading
+changes. Never relax a load-transfer threshold merely to make the robot lift.
+
+Each trial must pass the baseline noise checks, unloading gate, and touchdown
+gate. During air hold, force must remain below 20% of baseline and support
+margin >=10 mm; total force must stay within 70–130% of baseline. Inspect the
+whole interval: a low `min_airborne_force_ratio` alone cannot prove that force
+stayed below the limit throughout. Require no protection/watchdog event and
+the same position/return thresholds as Chapter 3. Keep leg-mode roll/pitch
+excursions <=0.10 rad and speed <=0.8 rad/s.
+
+## Chapter 5 — Four-leg sequence
+
+Purpose: repeat the validated single-leg action across all four legs with
+verified contact between lifts. Hardware prerequisite: Chapter 4 has passed
+three times and the same entry, exit, and fall-protection arrangements apply.
+
+### 5.1 Rehearse on the Pi now
+
+```bash
+cd ~/Robotic-Dog-Tracking-Interface
+mkdir -p logs/dry-run
+./build-arm64/go1_lowlevel_experiment --dry-run --mode leg-lift-sequence \
+  --leg auto --lift-height-m 0.02 \
+  --tau-overlay-nm 0.10 --tau-overlay-hz 0.5 \
+  --log logs/dry-run/leg_sequence.csv
+sha256sum logs/dry-run/leg_sequence.csv
+```
+
+The program completes touchdown and recentering, holds for three seconds,
+collects a new two-second baseline, and chooses the next untested leg. The
+order is determined by current estimated margin, not fixed FR/FL/RR/RL order.
+A failed leg gate stops progression to later legs. `--leg auto` is required.
+
+### 5.2 Download and inspect on Ubuntu
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+conda activate dog_ctrl
+mkdir -p logs/dry-run
+GO1_REVIEW_DIR=$(mktemp -d logs/dry-run/leg-sequence-XXXXXXXX)
+scp pi@192.168.12.1:~/Robotic-Dog-Tracking-Interface/logs/dry-run/leg_sequence.csv \
+  "$GO1_REVIEW_DIR/"
+sha256sum "$GO1_REVIEW_DIR/leg_sequence.csv"
+python3 experiment/analyze_lowlevel_log.py "$GO1_REVIEW_DIR/leg_sequence.csv"
+```
+
+Compare hashes. Confirm all four distinct legs complete the lift, air-hold,
+lower, contact-verification, and recenter phases. Examine each leg separately;
+the analyzer's aggregate minimum margin and final contact ratio cannot certify
+all four touchdowns. Keep the per-leg phase and force traces with the summary.
+
+### 5.3 Hardware test reference — pending Chapters 2–4
+
+```text
+./build-arm64/go1_lowlevel_experiment --mode leg-lift-sequence \
+  --leg auto --lift-height-m 0.02 \
+  --tau-overlay-nm 0.10 --tau-overlay-hz 0.5 \
+  --ground-confirmed --remote-confirmed \
+  --local-port 8090 --high-local-port 8091 --log logs/leg_sequence.csv
+```
+
+Once released for hardware, require three complete sequences. Each of the four
+legs must independently meet Chapter 4's gates, without aborts, watchdog events,
+or support-margin violations. Archive and review one sequence before running
+the next. These experiments establish the hybrid-impedance action chain; they
+do not establish pure-torque tracking bandwidth or readiness for rear-leg-only
+standing.
 
 ## Reference — Why the 500 Hz loop runs onboard
 
