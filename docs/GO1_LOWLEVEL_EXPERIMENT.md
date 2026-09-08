@@ -7,12 +7,16 @@ do not count as hardware acceptance.
 | Chapter | Experiment | Current status |
 | --- | --- | --- |
 | [1](#chapter-1--remote-preflight) | Communication and remote preflight | Reported passing run: `remote_preflight_fix_02.csv` |
-| [2](#chapter-2--ground-handover) | Standing takeover and 10-second hold | Dry-run available; hardware entry and normal exit unresolved |
+| [2](#chapter-2--ground-handover) | Standing takeover and 10-second hold | Reported dry-run passed; hardware entry and normal exit unresolved |
 | [3](#chapter-3--squat-and-return) | Four-leg half-squat and return | Dry-run available; requires Chapter 2 hardware acceptance |
 | [4](#chapter-4--single-leg-lift) | Weight transfer and one leg lift | Dry-run available; requires Chapter 3 hardware acceptance |
 | [5](#chapter-5--four-leg-sequence) | Four sequential leg lifts | Dry-run available; requires Chapter 4 hardware acceptance |
 
-**Next action after the passing preflight:** use Chapter 2's software rehearsal.
+**Next action after the passing handover dry-run:** archive/clean its Pi copy
+using 2.4, then run the squat dry-run in 3.1. After checking and archiving each
+result, continue with single-leg dry-run (4.1) and sequence dry-run (5.1).
+These software rehearsals do not require the previous chapter's hardware gate;
+the hardware gates still apply to every actual robot action.
 The hardware command references in Chapters 2–5 document the existing CLI;
 they are not cleared for floor testing with the current executable. There is
 no implemented normal lie-down-and-exit command yet. The existing CLI accepts
@@ -598,11 +602,27 @@ Before floor execution, the implementation and operating procedure must provide:
 4. Software tests for normal completion, operator cancellation, and loss of
    feedback during that endpoint, followed by a reviewed first-hardware procedure.
 
-Until these are complete, perform only 2.2–2.3. Do not improvise an exit with
+Until these are complete, perform only software rehearsal, analysis, and cleanup
+(2.2–2.4). Do not improvise an exit with
 double Ctrl-C, a factory remote command during takeover, or battery removal.
 No reliable support rig has been established for this setup.
 
 ### 2.2 Rehearse on the Pi now
+
+**Completed on 2026-09-08; do not repeat this normal rehearsal just to proceed.**
+The reported run completed with 8,251 samples (about 16.5 simulated seconds).
+The Pi and Ubuntu SHA-256 both matched:
+
+```text
+f460d30a2c2c23570e501a47ebd0c4982b66a70f9ac920bf5f235fc820202944
+```
+
+The Ubuntu archive is
+`~/Yuxuan/Robotic-Dog-Tracking-Interface/logs/dry-run/handover-Z6dkjhnB/`.
+It contains the CSV, `.summary.csv`, and `ground_handover_plots/`.
+Acceptance here is based on the supplied terminal output; the raw CSV and
+plots have not been independently inspected on the development computer.
+The commands below remain available for a future required rerun.
 
 In the **Pi SSH terminal**:
 
@@ -641,7 +661,51 @@ Check that commanded positions stay at the captured pose during
 `GROUND_HANDOVER` and feed-forward torque stays zero. Synthetic timing and
 tracking do not predict actual takeover behavior or validate normal shutdown.
 
-### 2.4 Hardware test reference — pending 2.1
+For the reported normal handover dry-run, the following are expected:
+
+- `rate=500.00 Hz`, 2 ms gaps: the simulator supplies these timestamps; this is
+  not a measurement of the Pi's real scheduler or network.
+- Zero roll/pitch excursion and joint speed: the simulated robot starts at its
+  hold target and there is no motion reference in this mode.
+- `L2+B_seen=0`: no stop was injected. A normal handover must not require an
+  emergency-stop event to pass.
+- Support and remote-stop latency `nan`: this run has no lift/contact-verification
+  phases and no remote-stop transition to measure. These are not failures here.
+- No abort, duplicate fresh tick, or watchdog event: the normal dry-run passed.
+
+The repeated `scp` shown in the terminal copied the same file to the same local
+pathname; it did not create a second CSV in that archive directory. The final
+matching checksum confirms the downloaded file. There is no extra copy there
+to delete merely because `scp` was run twice.
+
+### 2.4 Clean the archived handover log from the Pi
+
+Run in **Ubuntu window 2**, after reviewing the summary. This block uses the
+known archive path from the passing run so it also works after reopening the
+terminal. For a future rerun, use that run's archive directory instead.
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+GO1_REVIEW_DIR=logs/dry-run/handover-Z6dkjhnB
+if [ -s "$GO1_REVIEW_DIR/ground_handover.csv.summary.csv" ] && \
+   GO1_CHECKSUM=$(sha256sum "$GO1_REVIEW_DIR/ground_handover.csv"); then
+  GO1_CHECKSUM=${GO1_CHECKSUM%% *}
+  ssh pi@192.168.12.1 \
+    "cd /home/pi/Robotic-Dog-Tracking-Interface/logs/dry-run && \
+     printf '%s\n' '$GO1_CHECKSUM  ground_handover.csv' | sha256sum -c - && \
+     rm -- /home/pi/Robotic-Dog-Tracking-Interface/logs/dry-run/ground_handover.csv"
+else
+  echo 'STOP: local raw log or summary missing; nothing deleted'
+fi
+```
+
+Only a matching Pi copy is deleted. The Ubuntu CSV, summary, and plots remain.
+If the Pi log has been regenerated since download, its hash will differ and
+deletion will not run. Do not start a new run while checking/removing its log.
+No need to stop or restore Programming Module for a dry-run: it opens no robot
+UDP socket. You can now proceed to the squat dry-run in 3.1.
+
+### 2.5 Hardware test reference — pending 2.1
 
 Existing Pi CLI, **not an executable instruction for the current floor setup**:
 
@@ -711,7 +775,30 @@ return error, IMU excursions, and foot forces. This action has no intended
 feed-forward torque excitation, so a torque-correlation threshold is not its
 acceptance criterion.
 
-### 3.3 Hardware test reference — pending Chapter 2
+### 3.3 Clean the archived squat log from the Pi, then continue
+
+Run in the **same Ubuntu window 2** used for 3.2, after reviewing that result:
+
+```bash
+if [ -s "$GO1_REVIEW_DIR/squat.csv.summary.csv" ] && \
+   GO1_CHECKSUM=$(sha256sum "$GO1_REVIEW_DIR/squat.csv"); then
+  GO1_CHECKSUM=${GO1_CHECKSUM%% *}
+  ssh pi@192.168.12.1 \
+    "cd /home/pi/Robotic-Dog-Tracking-Interface/logs/dry-run && \
+     printf '%s\n' '$GO1_CHECKSUM  squat.csv' | sha256sum -c - && \
+     rm -- /home/pi/Robotic-Dog-Tracking-Interface/logs/dry-run/squat.csv"
+else
+  echo 'STOP: local raw log or summary missing; nothing deleted'
+fi
+```
+
+Keep the Ubuntu archive. After a passing squat rehearsal, continue with 4.1's
+single-leg dry-run. If there is an abort or missing required phase, preserve
+the result for diagnosis instead of moving on. To reuse this block after
+opening a new terminal, first set `GO1_REVIEW_DIR` to the archive path printed
+in 3.2; do not create an empty replacement directory.
+
+### 3.4 Hardware test reference — pending Chapter 2
 
 ```text
 ./build-arm64/go1_lowlevel_experiment --mode squat \
@@ -782,7 +869,28 @@ support margins, and the full phase sequence. Check torque against
 `tau_cmd_total = tau_ff + Kp*(qd-q) + Kd*(dqd-dq)`; `tauEst` includes the
 impedance contribution and loading effects.
 
-### 4.3 Hardware test reference — pending Chapters 2–3
+### 4.3 Clean the archived single-leg log from the Pi, then continue
+
+Run in the **same Ubuntu window 2** used for 4.2, after reviewing that result:
+
+```bash
+if [ -s "$GO1_REVIEW_DIR/leg_lift.csv.summary.csv" ] && \
+   GO1_CHECKSUM=$(sha256sum "$GO1_REVIEW_DIR/leg_lift.csv"); then
+  GO1_CHECKSUM=${GO1_CHECKSUM%% *}
+  ssh pi@192.168.12.1 \
+    "cd /home/pi/Robotic-Dog-Tracking-Interface/logs/dry-run && \
+     printf '%s\n' '$GO1_CHECKSUM  leg_lift.csv' | sha256sum -c - && \
+     rm -- /home/pi/Robotic-Dog-Tracking-Interface/logs/dry-run/leg_lift.csv"
+else
+  echo 'STOP: local raw log or summary missing; nothing deleted'
+fi
+```
+
+Keep the Ubuntu archive. After the single-leg rehearsal completes all required
+phases without abort, proceed to 5.1's sequence dry-run. In a new Ubuntu
+terminal, restore `GO1_REVIEW_DIR` to the actual 4.2 archive path first.
+
+### 4.4 Hardware test reference — pending Chapters 2–3
 
 ```text
 ./build-arm64/go1_lowlevel_experiment --mode leg-lift \
@@ -846,7 +954,51 @@ lower, contact-verification, and recenter phases. Examine each leg separately;
 the analyzer's aggregate minimum margin and final contact ratio cannot certify
 all four touchdowns. Keep the per-leg phase and force traces with the summary.
 
-### 5.3 Hardware test reference — pending Chapters 2–4
+### 5.3 Clean the archived sequence log and finish software testing
+
+Run in the **same Ubuntu window 2** used for 5.2, after reviewing that result:
+
+```bash
+if [ -s "$GO1_REVIEW_DIR/leg_sequence.csv.summary.csv" ] && \
+   GO1_CHECKSUM=$(sha256sum "$GO1_REVIEW_DIR/leg_sequence.csv"); then
+  GO1_CHECKSUM=${GO1_CHECKSUM%% *}
+  ssh pi@192.168.12.1 \
+    "cd /home/pi/Robotic-Dog-Tracking-Interface/logs/dry-run && \
+     printf '%s\n' '$GO1_CHECKSUM  leg_sequence.csv' | sha256sum -c - && \
+     rm -- /home/pi/Robotic-Dog-Tracking-Interface/logs/dry-run/leg_sequence.csv"
+else
+  echo 'STOP: local raw log or summary missing; nothing deleted'
+fi
+ssh pi@192.168.12.1 \
+  'df -h /; find /home/pi/Robotic-Dog-Tracking-Interface/logs -maxdepth 2 \
+   -type f -name "*.csv" -printf "%10s %p\n"'
+```
+
+Keep all four Ubuntu raw logs, summaries, and plots as the software test record.
+Remaining Pi filenames are an inventory, not permission for a bulk delete.
+For an older file, archive and hash-check its exact pathname first. Never
+remove all of `logs/`, the SDK, or `build-arm64` to reclaim log storage.
+
+CTest-generated files, if left by a previous build, can be removed on the **Pi**
+after CTest has finished:
+
+```bash
+cd ~/Robotic-Dog-Tracking-Interface
+find build-arm64 -maxdepth 1 -type f -name 'go1_dry_*.csv' -print -delete
+```
+
+This targets simulated test outputs only. Downloaded Ubuntu plots and summaries
+are useful review artifacts, so this procedure keeps them. No raw hardware
+records are deleted by these dry-run cleanup blocks.
+
+Once all four dry-runs pass, the software rehearsal sequence is complete.
+Do not convert these commands to hardware commands by removing `--dry-run`.
+The next implementation task remains Chapter 2.1's verified standing entry and
+normal lie-down/exit, followed by its hardware acceptance. If finishing the
+session, leave SSH with `exit`; if Go1 is still powered, use the established
+shutdown procedure only once it is fully prone and floor-supported.
+
+### 5.4 Hardware test reference — pending Chapters 2–4
 
 ```text
 ./build-arm64/go1_lowlevel_experiment --mode leg-lift-sequence \
