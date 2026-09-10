@@ -671,18 +671,88 @@ The state-machine fixture uses ideal tracking and independently controlled
 support evidence; the integration fixture uses the existing simplified plant.
 Neither models belly contact or proves physical stability.
 
-For a future code change, run only the targeted developer suite:
+#### Test the new endpoint now — one Ubuntu terminal
+
+Run this new code check on **Ubuntu (`aims-Precision-7780`)**, in the local
+terminal. Do not SSH into the Pi. Go1 can remain powered off. This is the
+targeted test of the newly added endpoint, separate from the four completed
+ordinary rehearsals. Nothing needs to be copied onto the Pi.
+
+**1. Synchronize the source.** On the development computer, commit and push
+the current changes through the existing GitHub workflow first. Then on Ubuntu:
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+git status --short
+git pull --ff-only
+git submodule update --init --recursive
+```
+
+If Git reports conflicts or a failed pull, stop and retain the output; do not
+reset or discard local changes. The following file must now exist:
+
+```bash
+ls test/go1_ground_exit_test.cpp
+```
+
+**2. Build the two targets in a separate temporary build directory.** Continue
+in that same Ubuntu terminal, from the repository directory:
 
 ```bash
 cmake -S . -B /tmp/go1-exit-build -DBUILD_TESTING=ON -DBUILD_SDK_EXAMPLES=OFF
 cmake --build /tmp/go1-exit-build --target go1_ground_exit_test go1_lowlevel_experiment -j2
-ctest --test-dir /tmp/go1-exit-build -R '^go1_ground_exit_' --output-on-failure
 ```
 
-This does not request another lab dry-run or preflight. The integration test
-creates `/tmp/go1-exit-build/go1_dry_normal_exit.csv` on the computer running
-CTest, not in the existing Ubuntu archives or on the Pi. It is a disposable
-developer test artifact and is not a new archived hardware result.
+Both commands must succeed before continuing. This leaves the existing Pi
+`build-arm64` installation untouched.
+
+**3. Run only the new endpoint tests.** The subshell form below also works with
+older CTest versions that do not support `--test-dir`:
+
+```bash
+(cd /tmp/go1-exit-build && ctest -R '^go1_ground_exit_' -V)
+```
+
+The first test prints five `[PASS]` lines, covering normal completion, missing
+support, cancellation, fault handling, and hardware lockout. The second test
+runs the normal-exit integration fixture and writes its simulated CSV.
+The final required result is:
+
+```text
+100% tests passed, 0 tests failed out of 2
+```
+
+`No tests were found` is not a pass. A `[FAIL]`, build error, or fewer than two
+tests means stop here and retain the complete output. Send the output from
+this step for review; no additional robot preflight is needed.
+
+**4. Locate the result and optionally inspect it on Ubuntu.** The only generated
+CSV is `/tmp/go1-exit-build/go1_dry_normal_exit.csv` on Ubuntu. It is a disposable
+developer artifact, not a new hardware archive. For the usual summary:
+
+```bash
+conda activate dog_ctrl
+python3 experiment/analyze_lowlevel_log.py \
+  /tmp/go1-exit-build/go1_dry_normal_exit.csv --no-plots
+```
+
+The analyzer writes `/tmp/go1-exit-build/go1_dry_normal_exit.csv.summary.csv`.
+The two passing tests are the endpoint acceptance criterion; the analyzer's
+network and motion numbers describe simulated inputs, not robot performance.
+The old Ubuntu archives, including both handover archives, are unchanged.
+
+**5. Optional cleanup after a passing result has been reviewed.** There are no
+new Pi files to clean. On Ubuntu, remove only the generated simulation log and,
+if Step 4 was run, its summary; `-i` asks before each removal:
+
+```bash
+rm -i -- /tmp/go1-exit-build/go1_dry_normal_exit.csv
+rm -i -- /tmp/go1-exit-build/go1_dry_normal_exit.csv.summary.csv
+```
+
+Keep failed-test output until diagnosed. No deletion is needed to continue.
+Passing this check completes the new software endpoint test only; keep the
+hardware gate below in place.
 
 Before hardware can be enabled, review/calibrate the final pose and descent,
 provide an independent support-confirmation input with a tested failure path,

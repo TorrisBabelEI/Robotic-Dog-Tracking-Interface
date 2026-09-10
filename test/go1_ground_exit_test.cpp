@@ -165,11 +165,22 @@ void hardwareLock() {
 }
 }
 int main() {
-  try {
-    normal(); missingSupport(); cancel(); faults(); hardwareLock();
-    std::cout << "Ground exit tests passed (synthetic feedback/support only).\n";
-    return 0;
-  } catch (const std::exception &error) {
-    std::cerr << error.what() << '\n'; return 1;
+  struct TestCase { const char *name; void (*run)(); };
+  const TestCase cases[] = {
+      {"normal descent -> support verification -> damping -> completion", normal},
+      {"missing/premature support -> latched hold, no automatic exit", missingSupport},
+      {"cancel during handover/return/descent/verification", cancel},
+      {"feedback loss, watchdog, stops, send failure and invalid feedback", faults},
+      {"ground hardware CLI rejected before UDP", hardwareLock}};
+  for (const auto &test : cases) {
+    try {
+      test.run();
+      std::cout << "[PASS] " << test.name << '\n';
+    } catch (const std::exception &error) {
+      std::cerr << "[FAIL] " << test.name << ": " << error.what() << '\n';
+      return 1;
+    }
   }
+  std::cout << "Ground exit tests passed (synthetic feedback/support only).\n";
+  return 0;
 }
