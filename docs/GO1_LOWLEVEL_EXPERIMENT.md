@@ -7,20 +7,23 @@ do not count as hardware acceptance.
 | Chapter | Experiment | Current status |
 | --- | --- | --- |
 | [1](#chapter-1--remote-preflight) | Communication and remote preflight | Reported passing run: `remote_preflight_fix_02.csv` |
-| [2](#chapter-2--ground-handover) | Standing takeover and 10-second hold | Reported dry-run passed; hardware entry and normal exit unresolved |
-| [3](#chapter-3--squat-and-return) | Four-leg half-squat and return | Dry-run available; requires Chapter 2 hardware acceptance |
-| [4](#chapter-4--single-leg-lift) | Weight transfer and one leg lift | Dry-run available; requires Chapter 3 hardware acceptance |
-| [5](#chapter-5--four-leg-sequence) | Four sequential leg lifts | Dry-run available; requires Chapter 4 hardware acceptance |
+| [2](#chapter-2--ground-handover) | Standing takeover and 10-second hold | Original dry-run completed and archived twice; hardware locked |
+| [3](#chapter-3--squat-and-return) | Four-leg half-squat and return | Original dry-run completed and archived; hardware pending Chapter 2 |
+| [4](#chapter-4--single-leg-lift) | Weight transfer and one leg lift | Original dry-run completed and archived; hardware pending Chapter 3 |
+| [5](#chapter-5--four-leg-sequence) | Four sequential leg lifts | Original dry-run completed and archived; hardware pending Chapter 4 |
 
-**Next action after the passing handover dry-run:** archive/clean its Pi copy
-using 2.4, then run the squat dry-run in 3.1. After checking and archiving each
-result, continue with single-leg dry-run (4.1) and sequence dry-run (5.1).
-These software rehearsals do not require the previous chapter's hardware gate;
-the hardware gates still apply to every actual robot action.
-The hardware command references in Chapters 2–5 document the existing CLI;
-they are not cleared for floor testing with the current executable. There is
-no implemented normal lie-down-and-exit command yet. The existing CLI accepts
-these modes, so this restriction is procedural, not an executable lock.
+**Current next step: endpoint code development and validation in 2.1.1.**
+The operator has confirmed that all four original dry-run CSV files and their
+summaries are fully archived on Ubuntu. `handover-SB8m9xb7` and
+`handover-Z6dkjhnB` are two independent archives; retain both. They are not
+evidence of an overwritten download. No routine dry-run or preflight repetition
+is requested. The old rehearsal commands remain below as reference only.
+
+The new normal-exit state machine is a development fixture with synthetic
+support confirmation. Its target has not been calibrated to actual belly
+contact. Ground hardware modes now fail before ARM or UDP initialization;
+there is no command-line override. The hardware references in Chapters 2–5
+remain blocked pending endpoint and standing-takeover review.
 
 ## Common setup and operating rules
 
@@ -596,18 +599,97 @@ Before floor execution, the implementation and operating procedure must provide:
    first low-level feedback interval. If high-level capture fails, investigate
    that entry path; do not bypass the capture check.
 3. A normal endpoint that lowers the robot to a verified floor-supported prone
-   pose, enters damping, writes the log, and exits. This is **not implemented**.
-   The current +/-0.3 rad action limit and standing joint limits also need
-   explicit treatment for a full lie-down; changing a target alone is not enough.
+   pose, enters damping, writes the log, and exits. The state machine now exists
+   as a **development-only fixture**, described in 2.1.1. A calibrated target
+   and a real, independent floor-support confirmation input are still missing.
 4. Software tests for normal completion, operator cancellation, and loss of
    feedback during that endpoint, followed by a reviewed first-hardware procedure.
 
-Until these are complete, perform only software rehearsal, analysis, and cleanup
-(2.2–2.4). Do not improvise an exit with
+Until these are complete, continue endpoint development and targeted tests.
+The four original software rehearsals are already complete. Do not improvise an exit with
 double Ctrl-C, a factory remote command during takeover, or battery removal.
 No reliable support rig has been established for this setup.
 
-### 2.2 Rehearse on the Pi now
+### 2.1.1 Normal-exit development and test status
+
+The implemented development path is:
+
+```text
+GROUND_HANDOVER -> RETURN -> EXIT_LOWER (8 s)
+  -> EXIT_VERIFY_SUPPORT (at least 1 s stable, at most 5 s waiting)
+  -> EXIT_DAMPING (1 s) -> COMPLETE -> write CSV -> process exit
+```
+
+It is selected only by `--dry-run --mode ground-handover --dry-run-normal-exit`.
+The original ordinary dry-run behavior remains reproducible, so the existing
+archives are still valid records of that earlier action rehearsal. They do not
+test the new endpoint.
+
+The descent uses quintic interpolation, zero feed-forward torque, and the
+existing impedance gains. Its simulation-only target, in FR/FL/RR/RL order,
+is `(-0.28, 1.25, -2.70)`, `(0.28, 1.25, -2.70)`,
+`(-0.28, 1.25, -2.70)`, `(0.28, 1.25, -2.70)` rad.
+These values are **not an approved hardware lie-down pose**. In particular,
+the observed factory calf positions around -2.80 rad are outside the SDK
+command bounds and are not replayed as targets. Only the development endpoint
+can exceed the ordinary +/-0.3 rad displacement envelope; SDK joint bounds
+remain enforced, with a 0.10 rad tracking-error limit, 0.3 rad/s speed limit,
+and 0.10 rad relative roll/pitch limit during the endpoint.
+
+Support verification requires new valid feedback, all joint errors below
+0.05 rad, all joint speeds below 0.05 rad/s, and relative roll/pitch below
+0.10 rad for at least one second, together with an independent, current
+floor-support observation. Foot-force unloading, elapsed time, or reaching
+the target alone cannot prove that the belly is supported. An observation
+before this stage is not latched as permission. The development simulator
+explicitly supplies a synthetic observation; there is currently no hardware
+input for it. CSV adds `exit_support_confirmed` and `exit_stable_s`; a true
+flag in this fixture records simulated evidence only.
+
+Cancellation and faults have distinct outcomes:
+
+| Event | Result |
+| --- | --- |
+| Single Ctrl-C in handover or return | Return to captured standing hold; do not begin descent |
+| Single Ctrl-C during descent/verification | `EXIT_HOLD`: retain last commanded position, clear velocity reference and torque; do not automatically rise or exit |
+| Support not confirmed within 5 s | Failed `EXIT_HOLD`, retaining impedance; no automatic damping or exit |
+| Feedback older than 20 ms, watchdog, invalid feedback, L2+B, double Ctrl-C | Immediate `PANIC_DAMPING`; hardware panic semantics remain latched |
+| Failed send reported during normal damping | Panic; do not report successful normal exit |
+| Verified support and completed damping dwell | Write CSV, check write success, then exit |
+
+Holding a target after cancellation is not a dynamically validated braking
+trajectory. The low-speed cancellation and actual support-confirmation method
+still require engineering review before hardware. A successful SDK Send result
+also does not acknowledge physical damping at the motors.
+
+Developer checks run on the **development computer**, with no SSH or robot UDP.
+They cover normal descent/exit, missing and premature support confirmation,
+cancellation in handover/return/descent/verification, feedback loss during
+descent/verification/damping, remote stop, double Ctrl-C, watchdog, send
+failure, invalid IMU, joint limits, tracking error, and hardware CLI rejection.
+The state-machine fixture uses ideal tracking and independently controlled
+support evidence; the integration fixture uses the existing simplified plant.
+Neither models belly contact or proves physical stability.
+
+For a future code change, run only the targeted developer suite:
+
+```bash
+cmake -S . -B /tmp/go1-exit-build -DBUILD_TESTING=ON -DBUILD_SDK_EXAMPLES=OFF
+cmake --build /tmp/go1-exit-build --target go1_ground_exit_test go1_lowlevel_experiment -j2
+ctest --test-dir /tmp/go1-exit-build -R '^go1_ground_exit_' --output-on-failure
+```
+
+This does not request another lab dry-run or preflight. The integration test
+creates `/tmp/go1-exit-build/go1_dry_normal_exit.csv` on the computer running
+CTest, not in the existing Ubuntu archives or on the Pi. It is a disposable
+developer test artifact and is not a new archived hardware result.
+
+Before hardware can be enabled, review/calibrate the final pose and descent,
+provide an independent support-confirmation input with a tested failure path,
+and review the standing capture/takeover sequence. Then revise the first-run
+procedure and the code lock together. Do not remove `--dry-run` to proceed.
+
+### 2.2 Original Pi rehearsal — completed; reference only
 
 **Completed on 2026-09-08; do not repeat this normal rehearsal just to proceed.**
 The reported run completed with 8,251 samples (about 16.5 simulated seconds).
@@ -620,6 +702,8 @@ f460d30a2c2c23570e501a47ebd0c4982b66a70f9ac920bf5f235fc820202944
 The Ubuntu archive is
 `~/Yuxuan/Robotic-Dog-Tracking-Interface/logs/dry-run/handover-Z6dkjhnB/`.
 It contains the CSV, `.summary.csv`, and `ground_handover_plots/`.
+The operator also confirmed the separate `handover-SB8m9xb7` archive.
+Keep both; optional deduplication needs checksum and analysis comparison first.
 Acceptance here is based on the supplied terminal output; the raw CSV and
 plots have not been independently inspected on the development computer.
 The commands below remain available for a future required rerun.
@@ -703,7 +787,8 @@ Only a matching Pi copy is deleted. The Ubuntu CSV, summary, and plots remain.
 If the Pi log has been regenerated since download, its hash will differ and
 deletion will not run. Do not start a new run while checking/removing its log.
 No need to stop or restore Programming Module for a dry-run: it opens no robot
-UDP socket. You can now proceed to the squat dry-run in 3.1.
+UDP socket. All four original dry-runs have now been archived; proceed to
+endpoint development in 2.1.1, not another routine rehearsal.
 
 ### 2.5 Hardware test reference — pending 2.1
 
@@ -739,7 +824,10 @@ Purpose: exercise all four legs with slow impedance-controlled motion while
 keeping four-foot contact. Hardware prerequisite: Chapter 2's complete entry,
 hold, and normal exit passed three times.
 
-### 3.1 Rehearse on the Pi now
+### 3.1 Original Pi rehearsal — completed; reference only
+
+The operator confirmed the raw CSV and summary are archived on Ubuntu.
+No routine rerun is required.
 
 In the **Pi SSH terminal**:
 
@@ -792,8 +880,8 @@ else
 fi
 ```
 
-Keep the Ubuntu archive. After a passing squat rehearsal, continue with 4.1's
-single-leg dry-run. If there is an abort or missing required phase, preserve
+Keep the Ubuntu archive. The single-leg dry-run in 4.1 is also complete.
+For any future changed-code rehearsal with an abort or missing phase, preserve
 the result for diagnosis instead of moving on. To reuse this block after
 opening a new terminal, first set `GO1_REVIEW_DIR` to the archive path printed
 in 3.2; do not create an empty replacement directory.
@@ -806,8 +894,9 @@ in 3.2; do not create an empty replacement directory.
   --log logs/squat.csv
 ```
 
-The current executable ends at standing `SAFE_HOLD`; do not run this hardware
-command until Chapter 2's normal exit is implemented for this mode as well.
+The current executable rejects this hardware command before opening UDP.
+The ordinary squat simulation ends at standing `SAFE_HOLD`; Chapter 2's
+development exit is not yet integrated or validated for this mode.
 Use the verified entry/exit and archive cycle for each repetition. Require three
 normal runs with all four feet maintaining contact, no protection or watchdog,
 all-joint `position_rms_rad < 0.08`, `return_error_rad < 0.05`, and roll/pitch
@@ -822,7 +911,10 @@ adequate fall protection with another person present for the initial test.
 Three contacting feet alone do not guarantee static stability. The estimated
 CoP margin is a load-distribution check, not a complete stability guarantee.
 
-### 4.1 Rehearse on the Pi now
+### 4.1 Original Pi rehearsal — completed; reference only
+
+The operator confirmed the raw CSV and summary are archived on Ubuntu.
+No routine rerun is required.
 
 ```bash
 cd ~/Robotic-Dog-Tracking-Interface
@@ -887,7 +979,8 @@ fi
 ```
 
 Keep the Ubuntu archive. After the single-leg rehearsal completes all required
-phases without abort, proceed to 5.1's sequence dry-run. In a new Ubuntu
+phases without abort, retain that acceptance. The sequence dry-run in 5.1
+is also already complete. In a new Ubuntu
 terminal, restore `GO1_REVIEW_DIR` to the actual 4.2 archive path first.
 
 ### 4.4 Hardware test reference — pending Chapters 2–3
@@ -919,7 +1012,10 @@ Purpose: repeat the validated single-leg action across all four legs with
 verified contact between lifts. Hardware prerequisite: Chapter 4 has passed
 three times and the same entry, exit, and fall-protection arrangements apply.
 
-### 5.1 Rehearse on the Pi now
+### 5.1 Original Pi rehearsal — completed; reference only
+
+The operator confirmed the raw CSV and summary are archived on Ubuntu.
+No routine rerun is required.
 
 ```bash
 cd ~/Robotic-Dog-Tracking-Interface
@@ -991,10 +1087,11 @@ This targets simulated test outputs only. Downloaded Ubuntu plots and summaries
 are useful review artifacts, so this procedure keeps them. No raw hardware
 records are deleted by these dry-run cleanup blocks.
 
-Once all four dry-runs pass, the software rehearsal sequence is complete.
+All four original dry-runs are confirmed complete and archived. The software
+rehearsal sequence is complete; no routine repetition is requested.
 Do not convert these commands to hardware commands by removing `--dry-run`.
-The next implementation task remains Chapter 2.1's verified standing entry and
-normal lie-down/exit, followed by its hardware acceptance. If finishing the
+The next development gate is Chapter 2.1.1's endpoint validation and calibrated
+support confirmation, plus verified standing entry, followed by hardware acceptance. If finishing the
 session, leave SSH with `exit`; if Go1 is still powered, use the established
 shutdown procedure only once it is fully prone and floor-supported.
 

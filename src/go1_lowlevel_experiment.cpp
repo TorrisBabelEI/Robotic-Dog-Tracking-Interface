@@ -81,7 +81,8 @@ enum class ExperimentMode {
 enum class Phase {
   Disarmed, RemotePreflight, Precheck, CapturePose, Baseline, Hold,
   GroundHandover, TorqueExcite, Squat, WeightShift, Lift, AirHold, Lower,
-  ContactVerify, Recenter, InterLeg, Return, SafeHold, PanicDamping, Complete
+  ContactVerify, Recenter, InterLeg, Return, SafeHold, PanicDamping, Complete,
+  ExitLower, ExitVerify, ExitHold, ExitDamping
 };
 
 const char *phaseName(Phase phase) {
@@ -106,6 +107,10 @@ const char *phaseName(Phase phase) {
   case Phase::SafeHold: return "SAFE_HOLD";
   case Phase::PanicDamping: return "PANIC_DAMPING";
   case Phase::Complete: return "COMPLETE";
+  case Phase::ExitLower: return "EXIT_LOWER";
+  case Phase::ExitVerify: return "EXIT_VERIFY_SUPPORT";
+  case Phase::ExitHold: return "EXIT_HOLD";
+  case Phase::ExitDamping: return "EXIT_DAMPING";
   }
   return "UNKNOWN";
 }
@@ -159,6 +164,9 @@ struct Options {
   bool remoteConfirmed = false;
   bool proneConfirmed = false;
   bool dryRun = false;
+  // Development endpoint only. A nominal folded pose is not evidence of
+  // belly contact; hardware remains locked pending calibration and review.
+  bool dryRunNormalExit = false;
   double injectSoftStopS = -1.0;
   double injectPanicS = -1.0;
   double injectDoubleCtrlCS = -1.0;
@@ -204,6 +212,8 @@ struct LogSample {
   double loopDtUs = 0.0;
   std::string abortReason, stopSource;
   int64_t stopRequestNs = 0, dampingCommandNs = 0;
+  bool exitSupportConfirmed = false;
+  double exitStableS = 0;
   Feedback feedback;
   Command command;
   std::array<float, kJointCount> tauTotal;
@@ -302,7 +312,11 @@ public:
 
   Command step(const Feedback &feedback, bool hasState, bool recvFresh,
                bool recvAlive, int recvResult, int sendResult, double loopDtUs,
-               int64_t hostNs, bool watchdogActive) {
+               int64_t hostNs, bool watchdogActive,
+               bool floorSupportObserved = false) {
+    // This is a per-cycle independent observation, never a startup permission
+    // or a conclusion inferred from the commanded joint pose/foot unloading.
+    exitSupportConfirmed_ = false;
     if (phase_ == Phase::Disarmed)
       transition(options_.mode == ExperimentMode::RemotePreflight
                      ? Phase::RemotePreflight : Phase::Precheck);
@@ -427,7 +441,61 @@ public:
       break;
     case Phase::Return:
       command = returnCommand();
-      if (phaseElapsedS_ >= 2.0) transition(Phase::SafeHold);
+      if (phaseElapsedS_ >= 2.0) {
+        if (options_.dryRunNormalExit && stopSource_.empty()) {
+          for (std::size_t i = 0; i < kJointCount; ++i)
+            exitStartQ_[i] = feedback.joint[i].q;
+          exitStartNs_ = hostNs;
+          transition(Phase::ExitLower);
+        } else transition(Phase::SafeHold);
+      }
+      break;
+    case Phase::ExitLower:
+      command = exitLowerCommand(hostNs);
+      if (hostNs - exitStartNs_ >= 8000000000LL) {
+        exitVerifyNs_ = hostNs;
+        exitStableStartNs_ = 0;
+        transition(Phase::ExitVerify);
+      }
+      break;
+    case Phase::ExitVerify: {
+      command = holdCommand(exitTarget());
+      bool settled = recvFresh && recvAlive && feedback.levelFlag == kLowLevel;
+      for (std::size_t i = 0; i < kJointCount; ++i)
+        settled = settled && std::fabs(feedback.joint[i].q - exitTarget()[i]) < 0.05
+                  && std::fabs(feedback.joint[i].dq) < 0.05;
+      settled = settled && std::fabs(feedback.rpy[0] - initialRpy_[0]) < 0.10
+                        && std::fabs(feedback.rpy[1] - initialRpy_[1]) < 0.10;
+      // Only new robot feedback advances the verification window. A repeated
+      // control sample cannot manufacture a second of stability.
+      if (recvFresh) {
+        if (!settled) exitStableStartNs_ = 0;
+        else if (exitStableStartNs_ == 0) exitStableStartNs_ = hostNs;
+      }
+      exitStableS_ = exitStableStartNs_ > 0
+          ? (hostNs - exitStableStartNs_) / 1.0e9 : 0;
+      if (settled && exitStableS_ >= 1.0 && floorSupportObserved) {
+        exitSupportConfirmed_ = true;
+        exitDampingStartNs_ = hostNs;
+        dampingCommandNs_ = hostNs;
+        transition(Phase::ExitDamping);
+        command = dampingCommand();
+      } else if (hostNs - exitVerifyNs_ >= 5000000000LL) {
+        holdExit("exit_support_not_confirmed", hostNs);
+        command = holdCommand(exitHoldQ_);
+      }
+      break;
+    }
+    case Phase::ExitHold:
+      command = holdCommand(exitHoldQ_);
+      // Deliberately latched: cancellation or absent support never authorizes
+      // damping, automatic standing, or process exit.
+      break;
+    case Phase::ExitDamping:
+      command = dampingCommand();
+      if (sendResult != 0) enterPanic("exit_damping_send_failed", hostNs);
+      else if (hostNs - exitDampingStartNs_ >= 1000000000LL)
+        transition(Phase::Complete);
       break;
     case Phase::SafeHold:
       command = holdCommand(initialQ_);
@@ -444,7 +512,11 @@ public:
     case Phase::Complete:
     case Phase::Disarmed: break;
     }
+    // A phase handler may discover a fault after it constructed a position
+    // command. Do not publish that command for one extra control cycle.
+    if (phase_ == Phase::PanicDamping) command = dampingCommand();
     sanitizeCommand(command);
+    lastCommand_ = command;
     appendLog(feedback, command, recvFresh, recvResult, sendResult, loopDtUs, hostNs,
               watchdogActive);
     phaseElapsedS_ += kControlDt;
@@ -460,7 +532,7 @@ public:
            "remote_head0,remote_head1,remote_buttons,remote_lx,remote_ly,"
            "remote_rx,remote_ry,remote_l2,level_flag,imu_roll,imu_pitch,imu_yaw,"
            "gyro_x,gyro_y,gyro_z,accel_x,accel_y,accel_z,cop_valid,"
-           "cop_x_m,cop_y_m,total_foot_force";
+           "cop_x_m,cop_y_m,total_foot_force,exit_support_confirmed,exit_stable_s";
     for (std::size_t leg = 0; leg < 4; ++leg)
       out << ",foot_force_" << leg << ",foot_force_baseline_" << leg
           << ",foot_force_mad_" << leg << ",support_margin_"
@@ -475,7 +547,8 @@ public:
           << name << "_temperature";
     out << '\n' << std::setprecision(9);
     for (const auto &sample : logs_) writeLogRow(out, sample);
-    return true;
+    out.flush();
+    return out.good();
   }
 
 private:
@@ -537,17 +610,25 @@ private:
       if (j.q < kJointMin[i % 3] || j.q > kJointMax[i % 3]) {
         enterPanic(std::string("joint_limit_") + kJointNames[i], nowNs); return;
       }
-      if (poseCaptured_ && std::fabs(j.q - initialQ_[i]) > 0.3) {
+      if (poseCaptured_ && !inExitEnvelope() && std::fabs(j.q - initialQ_[i]) > 0.3) {
         enterPanic(std::string("joint_displacement_") + kJointNames[i], nowNs); return;
       }
-      const double limit = isLegMotionPhase(phase_) ? 0.8
+      if (inExitEnvelope() && phase_ != Phase::ExitDamping &&
+          lastCommand_.joint[i].q < 1.0e8F &&
+          std::fabs(j.q - lastCommand_.joint[i].q) > 0.10) {
+        enterPanic(std::string("exit_tracking_error_") + kJointNames[i], nowNs); return;
+      }
+      const double limit = inExitEnvelope() ? 0.3 : isLegMotionPhase(phase_) ? 0.8
                          : isGroundMode(options_.mode) ? 1.0 : 2.0;
       if (std::fabs(j.dq) > limit) {
         enterPanic(std::string("joint_speed_") + kJointNames[i], nowNs); return;
       }
     }
     if (isGroundMode(options_.mode) && poseCaptured_) {
-      const double limit = isLegMotionPhase(phase_) ? 0.10 : 0.20;
+      for (float angle : f.rpy) {
+        if (!std::isfinite(angle)) { enterPanic("nonfinite_imu", nowNs); return; }
+      }
+      const double limit = inExitEnvelope() || isLegMotionPhase(phase_) ? 0.10 : 0.20;
       if (std::fabs(f.rpy[0] - initialRpy_[0]) > limit ||
           std::fabs(f.rpy[1] - initialRpy_[1]) > limit)
         requestSoftStop("ground_attitude_soft_abort", f, nowNs);
@@ -872,6 +953,35 @@ private:
     }
     return c;
   }
+  bool inExitEnvelope() const {
+    return options_.dryRunNormalExit &&
+        (phase_ == Phase::ExitLower || phase_ == Phase::ExitVerify ||
+         phase_ == Phase::ExitHold || phase_ == Phase::ExitDamping);
+  }
+  static std::array<float, kJointCount> exitTarget() {
+    // Simulation fixture, NOT a calibrated prone pose. Factory calf feedback
+    // (~-2.80) is outside the command limit and must never be replayed here.
+    return {{-0.28F, 1.25F, -2.70F, 0.28F, 1.25F, -2.70F,
+             -0.28F, 1.25F, -2.70F, 0.28F, 1.25F, -2.70F}};
+  }
+  Command exitLowerCommand(int64_t nowNs) const {
+    const double t = (nowNs - exitStartNs_) / 8.0e9;
+    Command c = holdCommand(exitStartQ_);
+    const auto target = exitTarget();
+    for (std::size_t i = 0; i < kJointCount; ++i) {
+      const double delta = target[i] - exitStartQ_[i];
+      c.joint[i].q += static_cast<float>(delta * smoothStep5(t));
+      c.joint[i].dq = static_cast<float>(delta * smoothStep5Derivative(t) / 8.0);
+    }
+    return c;
+  }
+  void holdExit(const std::string &reason, int64_t nowNs) {
+    for (std::size_t i = 0; i < kJointCount; ++i)
+      exitHoldQ_[i] = lastCommand_.joint[i].q;
+    stopSource_ = reason; stopRequestNs_ = nowNs;
+    if (reason != "ctrl_c") { failed_ = true; faultReason_ = reason; }
+    transition(Phase::ExitHold);
+  }
   void beginReturn(const Feedback &f) {
     if (!poseCaptured_ || phase_ == Phase::Return ||
         phase_ == Phase::PanicDamping || phase_ == Phase::Complete) return;
@@ -879,6 +989,18 @@ private:
     transition(Phase::Return);
   }
   void requestSoftStop(const std::string &source, const Feedback &f, int64_t nowNs) {
+    if (inExitEnvelope()) {
+      if (phase_ != Phase::ExitDamping && phase_ != Phase::ExitHold)
+        holdExit(source, nowNs);
+      return;
+    }
+    if (options_.dryRunNormalExit && phase_ == Phase::Return) {
+      // A cancellation arriving during the return must also prevent the
+      // following automatic descent; continue the existing return smoothly.
+      stopSource_ = source; stopRequestNs_ = nowNs;
+      if (source != "ctrl_c") { failed_ = true; faultReason_ = source; }
+      return;
+    }
     if (phase_ == Phase::PanicDamping || phase_ == Phase::Complete ||
         phase_ == Phase::Return || phase_ == Phase::SafeHold) return;
     stopSource_ = source; stopRequestNs_ = nowNs;
@@ -905,7 +1027,8 @@ private:
       auto &j = c.joint[i];
       j.tauFf = clampValue(j.tauFf, -1.0F, 1.0F);
       if (poseCaptured_ && j.q < 1.0e8F) {
-        j.q = clampValue(j.q, initialQ_[i] - 0.3F, initialQ_[i] + 0.3F);
+        if (!inExitEnvelope())
+          j.q = clampValue(j.q, initialQ_[i] - 0.3F, initialQ_[i] + 0.3F);
         j.q = clampValue(j.q, kJointMin[i % 3], kJointMax[i % 3]);
       }
     }
@@ -918,6 +1041,7 @@ private:
     s.loopDtUs = loopUs; s.watchdogActive = watchdog;
     s.abortReason = faultReason_; s.stopSource = stopSource_;
     s.stopRequestNs = stopRequestNs_; s.dampingCommandNs = dampingCommandNs_;
+    s.exitSupportConfirmed = exitSupportConfirmed_; s.exitStableS = exitStableS_;
     s.activeLeg = activeLegIndex(); s.feedback = f; s.command = c;
     s.support = support_; s.forceBaseline = forceBaseline_; s.forceMad = forceMad_;
     s.footTarget = footTargets_; fillTauTotal(s); logs_.push_back(s);
@@ -948,7 +1072,8 @@ private:
         << s.feedback.gyro[2] << ',' << s.feedback.accel[0] << ','
         << s.feedback.accel[1] << ',' << s.feedback.accel[2] << ','
         << (s.support.valid ? 1 : 0) << ',' << s.support.cop.x << ','
-        << s.support.cop.y << ',' << s.support.totalForce;
+        << s.support.cop.y << ',' << s.support.totalForce << ','
+        << s.exitSupportConfirmed << ',' << s.exitStableS;
     for (std::size_t leg = 0; leg < 4; ++leg)
       out << ',' << s.feedback.footForce[leg] << ',' << s.forceBaseline[leg]
           << ',' << s.forceMad[leg] << ',' << s.support.margin[leg] << ','
@@ -987,6 +1112,12 @@ private:
   std::string faultReason_, stopSource_;
   std::atomic<bool> doneFlag_{false}, safeHoldReached_{false}, panicReached_{false};
   std::array<float, kJointCount> precheckQ_{{0}}, initialQ_{{0}}, returnQ_{{0}};
+  std::array<float, kJointCount> exitStartQ_{{0}}, exitHoldQ_{{0}};
+  Command lastCommand_;
+  int64_t exitStartNs_ = 0, exitVerifyNs_ = 0, exitStableStartNs_ = 0;
+  int64_t exitDampingStartNs_ = 0;
+  double exitStableS_ = 0;
+  bool exitSupportConfirmed_ = false;
   std::array<float, 3> initialRpy_{{0, 0, 0}};
   std::array<go1::Vec3, 4> initialFeet_, footTargets_;
   std::array<std::vector<double>, 4> forceSamples_;
@@ -1083,11 +1214,20 @@ int runDry(const Options &options) {
     const bool watchdog = !watchdogInjected && options.injectWatchdogS >= 0 &&
                           elapsed >= options.injectWatchdogS;
     watchdogInjected = watchdogInjected || watchdog;
-    command = core.step(f, true, true, true, 0, 0, 2000, now, watchdog);
+    // Explicit synthetic belly-support evidence for this development fixture.
+    // simulatePlant has no ground-contact dynamics and cannot validate this.
+    const bool simulatedSupport = options.dryRunNormalExit &&
+        core.phase() == Phase::ExitVerify && core.phaseElapsedS() >= 1.5;
+    command = core.step(f, true, true, true, 0, 0, 2000, now, watchdog,
+                        simulatedSupport);
   }
   gSignalCount = 0;
-  if (!core.done()) return 4;
   if (!core.writeLog()) return 2;
+  if (!core.done()) {
+    std::cerr << "Dry run reached its simulation time limit in "
+              << phaseName(core.phase()) << "; diagnostic log=" << options.logPath << '\n';
+    return 4;
+  }
   std::cout << "Dry run complete: mode=" << modeName(options.mode)
             << ", samples=" << core.logCount() << ", log=" << options.logPath << '\n';
   if (core.failed() && options.injectPanicS < 0 &&
@@ -1479,6 +1619,7 @@ void printUsage(const char *program) {
       << "  --duration-s 10\n  --log PATH\n  --support-confirmed\n"
       << "  --ground-confirmed\n  --remote-confirmed\n  --prone-confirmed\n"
       << "  --dry-run\n"
+      << "  --dry-run-normal-exit     ground-handover endpoint development fixture\n"
       << "  --target-ip ADDRESS       (default 192.168.123.10)\n"
       << "  --local-port PORT         (default 8090)\n"
       << "  --target-port PORT        (default 8007)\n"
@@ -1535,6 +1676,7 @@ Options parseOptions(int argc, char **argv) {
     else if (arg == "--remote-confirmed") o.remoteConfirmed = true;
     else if (arg == "--prone-confirmed") o.proneConfirmed = true;
     else if (arg == "--dry-run") o.dryRun = true;
+    else if (arg == "--dry-run-normal-exit") o.dryRunNormalExit = true;
     else if (arg == "--inject-soft-stop-s") o.injectSoftStopS = parseDouble(arg, value(arg));
     else if (arg == "--inject-panic-s") o.injectPanicS = parseDouble(arg, value(arg));
     else if (arg == "--inject-double-ctrl-c-s") o.injectDoubleCtrlCS = parseDouble(arg, value(arg));
@@ -1563,6 +1705,10 @@ Options parseOptions(int argc, char **argv) {
     throw std::runtime_error("hardware leg-lift requires --remote-confirmed");
   if (o.mode == ExperimentMode::LegLiftSequence && !o.legAuto)
     throw std::runtime_error("leg-lift-sequence requires --leg auto");
+  if (o.dryRunNormalExit && (!o.dryRun || o.mode != ExperimentMode::GroundHandover))
+    throw std::runtime_error("--dry-run-normal-exit requires --dry-run --mode ground-handover");
+  if (!o.dryRun && isGroundMode(o.mode))
+    throw std::runtime_error("ground hardware modes are locked pending calibrated lie-down, floor-support confirmation, and takeover review; no UDP opened");
   if (!o.dryRun && (o.injectSoftStopS >= 0 || o.injectPanicS >= 0 ||
                     o.injectDoubleCtrlCS >= 0 ||
                     o.injectWatchdogS >= 0))
@@ -1572,11 +1718,12 @@ Options parseOptions(int argc, char **argv) {
 void signalHandler(int) { if (gSignalCount < 100) ++gSignalCount; }
 } // namespace
 
+#ifndef GO1_CORE_TEST
 int main(int argc, char **argv) {
   try {
     const Options options = parseOptions(argc, argv);
     std::signal(SIGINT, signalHandler); std::signal(SIGTERM, signalHandler);
-    if (options.dryRun) return runDry(options);
+  if (options.dryRun) return runDry(options);
 #if defined(GO1_WITH_SDK)
     if (!go1::confirmLogOverwrite(options.logPath, std::cin, std::cout) ||
         gSignalCount > 0) return 130;
@@ -1612,3 +1759,4 @@ int main(int argc, char **argv) {
     std::cerr << "Error: " << error.what() << '\n'; return 2;
   }
 }
+#endif

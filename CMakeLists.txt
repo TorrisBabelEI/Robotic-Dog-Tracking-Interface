@@ -76,6 +76,12 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+  add_executable(go1_ground_exit_test test/go1_ground_exit_test.cpp)
+  target_link_libraries(go1_ground_exit_test go1_kinematics)
+  add_test(NAME go1_ground_exit_state_machine COMMAND go1_ground_exit_test)
+  add_test(NAME go1_ground_exit_integration
+    COMMAND go1_lowlevel_experiment --dry-run --mode ground-handover
+      --dry-run-normal-exit --log ${CMAKE_BINARY_DIR}/go1_dry_normal_exit.csv)
   add_executable(go1_log_file_test test/go1_log_file_test.cpp)
   add_test(NAME go1_log_file_confirmation COMMAND go1_log_file_test)
   add_executable(go1_kinematics_test test/go1_kinematics_test.cpp)
