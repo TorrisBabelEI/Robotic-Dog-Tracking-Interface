@@ -12,12 +12,12 @@ do not count as hardware acceptance.
 | [4](#chapter-4--single-leg-lift) | Weight transfer and one leg lift | Original dry-run completed and archived; hardware pending Chapter 3 |
 | [5](#chapter-5--four-leg-sequence) | Four sequential leg lifts | Original dry-run completed and archived; hardware pending Chapter 4 |
 
-**Current next step: passive factory-traffic observation in 2.1.7 (no lifting rig).**
+**Current next step: factory return-to-prone observation in 2.1.8 (no lifting rig).**
 The operator confirmed no support equipment and requested continued development
 without external lifting. Section 2.1.6 is closed; lack of a rig is not a
 project-wide stop condition. The old standing-handover executable remains
 locked because its transition and endpoint are still unvalidated. The new
-route and the next actual-robot observation are specified in 2.1.7.
+route is specified in 2.1.7; the next actual-robot observation is in 2.1.8.
 Section 2.1.5 passed twice on Ubuntu: four checks, 1/1 test, and
 `test_exit=0` in both runs. Reports are `logs/capture-review-VrsaobOT/` and
 `logs/capture-review-l6xWpjfG/`. Retain either or both; no repeat is required.
@@ -1199,7 +1199,7 @@ Continue with 2.1.7 rather than requiring equipment purchase. This acceptance
 cannot establish a guarantee against damage, nor does it make the old
 standing-transition implementation ready for use.
 
-### 2.1.7 No-lift route: passive observation of factory traffic — current step
+### 2.1.7 No-lift route: passive observation of factory traffic — baseline completed
 
 #### Research conclusion and selected route
 
@@ -1249,12 +1249,121 @@ pgrep -af 'Legged_sport|programming[.]py|go1_lowlevel_experiment|example_positio
 sudo ss -Huanp
 ```
 
-Keep this output. `tcpdump` and `timeout` must each print a path. If either is
-missing, report that output for a tool-installation instruction; do not run
-an SDK example in its place. If one of our controllers or an SDK motion example
+Keep this output. `timeout` must print a path. If the ordinary-user lookup
+for `tcpdump` prints nothing, use Step 2a below before proceeding; it may be
+installed outside the user's PATH. Do not run an SDK example in its place. If one of our controllers or an SDK motion example
 is active, do not start this capture or kill the process blindly; report its
 state first. The factory processes should remain running. Another user program
 sending robot commands also needs to be identified before continuing.
+
+**2a. Resolve the missing tcpdump tool — Pi terminal.** The reported check
+found `/usr/bin/timeout` but no ordinary-user `tcpdump` path. The reported
+socket list shows `Legged_sport` using local 8008 to MCU 8007, which is covered
+by the capture filter; a socket listing alone does not prove packets are flowing.
+No process needs stopping for the tool check or passive recording.
+
+First check root's PATH, then install only the capture utility if necessary:
+
+```bash
+if sudo sh -c 'command -v tcpdump >/dev/null 2>&1'; then
+  sudo tcpdump --version
+else
+  sudo apt-get -o Acquire::Retries=0 -o Acquire::http::Timeout=15 \
+    -o Acquire::https::Timeout=15 update && \
+  sudo apt-get install --no-install-recommends --no-remove -y tcpdump && \
+  sudo tcpdump --version
+fi
+```
+
+Installation requires access to the Pi's configured package repositories. If
+DNS, repository access, signatures, or package installation fails, send the
+complete error; do not change network interfaces or package sources while
+following this step. We can prepare a matching offline package if necessary.
+This is not an instruction to upgrade the OS or reboot the robot. A printed
+tcpdump version means the utility is available through `sudo`, as used in Step 3.
+
+The output also showed `ros2udp_motion_` connected to high-level port 8082.
+Identify it by its current full command and executable path, without stopping it:
+
+```bash
+pgrep -af '[r]os2udp_motion_'
+for GO1_PROC_PID in $(pgrep -f '[r]os2udp_motion_'); do
+  ps -ww -p "$GO1_PROC_PID" -o pid=,ppid=,args=
+  sudo readlink -f "/proc/$GO1_PROC_PID/exe"
+done
+```
+
+Send this output with the tcpdump version or installation error. Keep the
+robot prone and do not request factory movement while an additional command
+publisher's origin is unresolved. Do not reuse the PID from the earlier output.
+
+**2b. Offline install after the reported DNS failure — completed.**
+The operator confirmed that direct `dpkg -i` installation succeeded:
+`tcpdump 4.9.3`, `libpcap 1.8.1`, and `OpenSSL 1.1.1d` were printed.
+The package SHA-256 matched the Pi APT cache. The previous local-file
+`apt-get --no-download` attempt failed; it did not complete installation.
+Do not repeat installation or change sources. Continue to Step 3 below.
+The remaining commands in Step 2b are retained as installation reference.
+
+The Pi could not resolve either the Tsinghua mirror or `packages.ros.org`.
+This is a name-resolution/connectivity failure, not evidence that replacing
+one mirror will fix it. APT reused old indexes and selected only
+`tcpdump:arm64 4.9.3-1~deb10u2`; the package download failed, so installation
+has not completed. Do not repeat the failed online installation or run the
+suggested `autoremove` (it lists development libraries used by this system).
+
+The matching package is present in the
+[official Debian archive](https://archive.debian.org/debian/pool/main/t/tcpdump/).
+Download on Ubuntu, then transfer over the existing robot connection. This
+avoids changing the Pi's sources, DNS or network interfaces.
+
+On **Ubuntu with working Internet access**, in one terminal:
+
+```bash
+mkdir -p ~/Downloads/go1-offline-tcpdump
+cd ~/Downloads/go1-offline-tcpdump
+curl --fail --location --connect-timeout 15 --max-time 120 \
+  -o tcpdump_4.9.3-1~deb10u2_arm64.deb \
+  'https://archive.debian.org/debian/pool/main/t/tcpdump/tcpdump_4.9.3-1~deb10u2_arm64.deb' && \
+  dpkg-deb -f tcpdump_4.9.3-1~deb10u2_arm64.deb Package Version Architecture
+```
+
+Require a successful download and metadata `tcpdump`, `4.9.3-1~deb10u2`,
+`arm64`. Do not install this ARM64 package on Ubuntu. After reconnecting Ubuntu
+to Go1 Wi-Fi, use the same terminal:
+
+```bash
+scp ~/Downloads/go1-offline-tcpdump/tcpdump_4.9.3-1~deb10u2_arm64.deb pi@192.168.12.1:~/
+```
+
+On **Pi**, verify the package against the SHA-256 in its existing APT index
+before installing it without downloads:
+
+```bash
+cd ~
+GO1_TCPDUMP_SHA=$(apt-cache show 'tcpdump=4.9.3-1~deb10u2' | awk '/^SHA256: / {print $2; exit}')
+if [ "$(dpkg --print-architecture)" != arm64 ]; then
+  echo 'STOP: unexpected Pi architecture'
+elif [[ "$GO1_TCPDUMP_SHA" =~ ^[0-9a-fA-F]{64}$ ]]; then
+  printf '%s  %s\n' "$GO1_TCPDUMP_SHA" 'tcpdump_4.9.3-1~deb10u2_arm64.deb' | sha256sum -c - && \
+  sudo dpkg -i ./tcpdump_4.9.3-1~deb10u2_arm64.deb && \
+  sudo tcpdump --version
+else
+  echo 'STOP: package checksum unavailable in the Pi APT cache; send output'
+fi
+```
+
+Require checksum `OK` and a printed tcpdump version. If verification or offline
+installation fails, retain the error; do not force dependencies or substitute a
+newer distribution's package. Once successful, continue directly to Step 3;
+there is no reboot or additional software rehearsal. Keep the robot prone.
+
+The identified additional process resolves to
+`/home/pi/Unitree/autostart/utrack/catkin_utrack/devel/lib/a2_ros2udp_adv/ros2udp_motion_mode_adv`.
+Its location is consistent with the installed Unitree utrack component; it
+must remain running for this passive capture. That path alone does not prove
+its current command contents, so keep tracking/walking functions inactive and
+make no movement requests during this capture.
 
 **3. Capture once for 15 seconds while the robot remains prone.** In that same
 **Pi terminal**:
@@ -1286,7 +1395,7 @@ negative observation, not permission to send a motor command.
 
 ```bash
 sudo chown "$(id -u):$(id -g)" "$GO1_NATIVE_DIR/native-prone.pcap"
-tcpdump -nn -tt -r "$GO1_NATIVE_DIR/native-prone.pcap" -c 20 \
+sudo tcpdump -nn -tt -r "$GO1_NATIVE_DIR/native-prone.pcap" -c 20 \
   > "$GO1_NATIVE_DIR/packet-summary.txt" 2>&1
 cat "$GO1_NATIVE_DIR/packet-summary.txt"
 sha256sum "$GO1_NATIVE_DIR/native-prone.pcap"
@@ -1327,6 +1436,109 @@ attach it if practical. After reviewing which packets are available, the next
 instruction will record one factory rise/return cycle or use an alternative
 observation interface. No rig purchase or repeated synthetic rehearsal is
 required to proceed with this route.
+
+### 2.1.8 Factory return to prone and damping — current step
+
+**Accepted baseline:** the file called `native-prone.pcap` was actually recorded
+while standing. Its SHA-256 is
+`a1d5d005c33a2aae89e36d5beb906735112cda483e4c1d109cd033f966212ff3`.
+Offline decoding found 10,000 state packets and 5,000 command packets over
+approximately 10 seconds; every packet passed its SDK CRC check. The 77 reported
+kernel drops limit timing conclusions but do not invalidate the standing
+baseline. See [GO1_NATIVE_STANDING_ANALYSIS.md](GO1_NATIVE_STANDING_ANALYSIS.md).
+Do not repeat standing capture or previous synthetic tests.
+
+**1. Prepare one factory-only observation.** Keep all factory services running.
+Do not start our low-level executable or enter developer mode. Use a flat,
+nonslip floor with space for the normal leg motion. Read Steps 2–3 first.
+If the robot is already standing under its normal factory controller, record
+one familiar **L2+A lie-down**, followed by **L2+B damping only after the robot
+has finished lying down**. No lifting is required.
+
+If it is already prone, leave it prone: record that state and the familiar
+L2+B damping transition, and report that no standing-to-prone motion occurred.
+Do not stand it up solely to satisfy this recording. If it is already damping,
+record it without pressing any buttons. This still supplies the missing prone
+endpoint observation.
+
+**2. Start a 40-second passive capture in the Pi terminal.** This version has
+no packet-count cap, so it will not end after about 10 seconds. It captures
+only the two already identified native flows. No new binary is deployed.
+
+```bash
+mkdir -p ~/Robotic-Dog-Tracking-Interface/logs
+GO1_RETURN_DIR=$(mktemp -d "$HOME/Robotic-Dog-Tracking-Interface/logs/native-return-XXXXXXXX")
+sudo -v
+printf 'Capture starting: follow Step 3 now; recording lasts 40 seconds.\n'
+sudo timeout --signal=INT --kill-after=3s 40s \
+  tcpdump -Z "$(id -un)" -p -n -i any -s 0 -B 8192 -U \
+  -w "$GO1_RETURN_DIR/native-return.pcap" \
+  'udp and ((src host 192.168.123.10 and src port 8007 and dst host 192.168.123.161 and dst port 8008) or (src host 192.168.123.161 and src port 8008 and dst host 192.168.123.10 and dst port 8007))' \
+  2> "$GO1_RETURN_DIR/capture.txt"
+GO1_RETURN_STATUS=$?
+cat "$GO1_RETURN_DIR/capture.txt"
+printf 'capture_exit=%s\nPi archive: %s\n' "$GO1_RETURN_STATUS" "$GO1_RETURN_DIR"
+```
+
+**3. During that capture, use the normal remote.** Leave the initial state
+unchanged for approximately five seconds. If initially standing, press the
+familiar L2+A combination once and wait until the lie-down has finished and
+the body is resting on the floor. Observe for another five seconds, then press
+L2+B once. Leave the robot untouched for the remaining recording time.
+Do not press L2+B on a timer while the body is still descending. If lie-down
+does not complete normally, do not advance to the planned damping step;
+report what occurred. Do not force another cycle if the capture ends early.
+For an initially prone robot, follow the prone branch in Step 1 instead.
+
+Exit `124` is expected when the 40-second timeout ends capture. Keep the capture
+output, including drops or errors. The timeout stops tcpdump only; it does not
+change robot mode. Record whether the trunk reached the floor, whether damping
+caused additional motion, and any slip, impact, or unusual sound.
+
+**4. Save context and checksum on Pi.** After capture ends:
+
+```bash
+sudo chown "$(id -u):$(id -g)" "$GO1_RETURN_DIR/native-return.pcap"
+read -r -p 'Initial posture; buttons used; final posture; motion after damping: ' GO1_RETURN_NOTE
+printf '%s\n' "$GO1_RETURN_NOTE" > "$GO1_RETURN_DIR/observation.txt"
+sha256sum "$GO1_RETURN_DIR/native-return.pcap"
+printf 'Copy this Pi archive path: %s\n' "$GO1_RETURN_DIR"
+```
+
+**5. Copy and decode on Ubuntu.** Ensure the updated repository contains
+`experiment/decode_native_go1_pcap.py`. In the Ubuntu terminal:
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+mkdir -p logs/factory-observation
+GO1_RETURN_LOCAL=$(mktemp -d "$PWD/logs/factory-observation/return-XXXXXXXX")
+read -r -p 'Paste the complete Pi archive path from Step 4: ' GO1_RETURN_REMOTE
+if [[ "$GO1_RETURN_REMOTE" =~ ^/home/pi/Robotic-Dog-Tracking-Interface/logs/native-return-[A-Za-z0-9]+$ ]]; then
+  scp -r "pi@192.168.12.1:$GO1_RETURN_REMOTE/." "$GO1_RETURN_LOCAL/" && \
+  sha256sum "$GO1_RETURN_LOCAL/native-return.pcap"
+else
+  echo 'STOP: unexpected Pi archive path; correct it before continuing'
+fi
+```
+
+Compare this hash with Step 4. Only when they match, run:
+
+```bash
+python3 experiment/decode_native_go1_pcap.py \
+  "$GO1_RETURN_LOCAL/native-return.pcap" \
+  --out "$GO1_RETURN_LOCAL/decoded"
+GO1_RETURN_DECODE_STATUS=$?
+printf 'decode_exit=%s\nUbuntu archive: %s\n' \
+  "$GO1_RETURN_DECODE_STATUS" "$GO1_RETURN_LOCAL"
+cat "$GO1_RETURN_LOCAL/observation.txt"
+```
+
+Send the capture output, decoding output, and observation text; attach the new
+PCAP for trajectory analysis. A decoder error is evidence to inspect offline,
+not a reason to repeat robot motion. The decoder intentionally rejects other
+wire layouts and does not overwrite an existing output directory. No custom
+low-level movement is authorized by passing the CRC check; the next controller
+change depends on reviewing the endpoint and transition data.
 
 ### 2.2 Original Pi rehearsal — completed; reference only
 
