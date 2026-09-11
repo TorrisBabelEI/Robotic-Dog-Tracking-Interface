@@ -230,6 +230,54 @@ double median(std::vector<double> values) {
                            : 0.5 * (values[middle - 1] + values[middle]);
 }
 
+// SDK-independent accumulator used by the real high-level capture path.
+// receiveSequence is the transport receive counter, NOT a robot source tick.
+class StandingPoseCapture {
+public:
+  bool observe(const Feedback &f, uint64_t receiveSequence, int64_t nowNs,
+               bool received, std::array<float, kJointCount> *pose) {
+    if (count_ && (nowNs <= lastNs_ || nowNs - lastNs_ > 20000000LL)) resetWindow();
+    if (!received || receiveSequence == sequence_) return false;
+    if (receiveSequence < sequence_) {
+      sequence_ = receiveSequence;
+      resetWindow();
+      return false;
+    }
+    sequence_ = receiveSequence;
+    bool valid = nowNs > 0 && f.levelFlag == 0xEE;
+    for (float angle : f.rpy) valid = valid && std::isfinite(angle);
+    valid = valid && std::fabs(f.rpy[0]) <= 0.5F && std::fabs(f.rpy[1]) <= 0.5F;
+    for (std::size_t i = 0; i < kJointCount; ++i) {
+      const auto &j = f.joint[i];
+      valid = valid && j.mode != kOverheatMode && j.temperature < 70 &&
+              std::isfinite(j.q) && std::isfinite(j.dq) &&
+              j.q >= kJointMin[i % 3] && j.q <= kJointMax[i % 3] &&
+              std::fabs(j.dq) <= 0.05F;
+      if (count_) valid = valid && std::fabs(j.q - reference_[i]) <= 0.02F;
+    }
+    if (!valid) { resetWindow(); return false; }
+    if (!count_) {
+      firstNs_ = nowNs;
+      for (std::size_t i = 0; i < kJointCount; ++i) reference_[i] = f.joint[i].q;
+    }
+    lastNs_ = nowNs;
+    ++count_;
+    for (std::size_t i = 0; i < kJointCount; ++i) sum_[i] += f.joint[i].q;
+    if (count_ < 100 || nowNs - firstNs_ < 200000000LL || !pose) return false;
+    for (std::size_t i = 0; i < kJointCount; ++i)
+      (*pose)[i] = static_cast<float>(sum_[i] / count_);
+    return true;
+  }
+  int count() const { return count_; }
+private:
+  void resetWindow() { count_ = 0; firstNs_ = lastNs_ = 0; sum_.fill(0); }
+  uint64_t sequence_ = 0;
+  int count_ = 0;
+  int64_t firstNs_ = 0, lastNs_ = 0;
+  std::array<float, kJointCount> reference_{{0}};
+  std::array<double, kJointCount> sum_{{0}};
+};
+
 class ExperimentCore {
 public:
   explicit ExperimentCore(const Options &options) : options_(options) {
@@ -1437,7 +1485,6 @@ private:
     UDP highUdp(HIGHLEVEL, options_.highLocalPort,
                 options_.highTargetIp.c_str(), options_.highTargetPort);
     HighCmd command = {};
-    HighState state = {};
     highUdp.InitCmdData(command);
     command.mode = 0;       // Idle/default stand; no walking command.
     command.gaitType = 0;
@@ -1448,59 +1495,37 @@ private:
     command.velocity = {{0.0F, 0.0F}};
     command.yawSpeed = 0.0F;
 
-    std::array<double, kJointCount> sum{{0}};
-    std::array<float, kJointCount> reference{{0}};
-    int validCount = 0;
-    int64_t lastValidNs = 0;
-    const int requiredCount = 100;
+    StandingPoseCapture capture;
     const int64_t deadline = steadyNowNs() + 3000000000LL;
     while (steadyNowNs() < deadline && gSignalCount == 0) {
-      highUdp.SetSend(command);
-      highUdp.Send();
+      if (highUdp.SetSend(command) < 0 || highUdp.Send() != 0) return false;
+      const auto before = highUdp.udpState;
       const int result = highUdp.Recv();
-      if (result >= 0) {
-        const int64_t now = steadyNowNs();
+      const auto after = highUdp.udpState;
+      const bool received = result >= 0 && after.RecvCount > before.RecvCount &&
+          after.FlagError == before.FlagError && after.RecvCRCError == before.RecvCRCError;
+      Feedback sample;
+      if (received) {
         HighState candidate = {};
         highUdp.GetRecv(candidate);
-        bool valid = candidate.levelFlag == HIGHLEVEL &&
-                     std::isfinite(candidate.imu.rpy[0]) &&
-                     std::isfinite(candidate.imu.rpy[1]) &&
-                     std::fabs(candidate.imu.rpy[0]) <= 0.5F &&
-                     std::fabs(candidate.imu.rpy[1]) <= 0.5F;
-        for (std::size_t i = 0; i < kJointCount && valid; ++i) {
-          const auto &joint = candidate.motorState[i];
-          valid = joint.mode != kOverheatMode && joint.temperature < 70 &&
-                  std::isfinite(joint.q) && std::isfinite(joint.dq) &&
-                  joint.q >= kJointMin[i % 3] &&
-                  joint.q <= kJointMax[i % 3] &&
-                  std::fabs(joint.dq) <= 1.0F;
+        xRockerBtnDataStruct remote = {};
+        std::memcpy(&remote, candidate.wirelessRemote.data(), sizeof(remote));
+        const uint16_t stop = kRemoteL2Mask | kRemoteBMask;
+        if ((remote.btn.value & stop) == stop) return false;
+        sample.levelFlag = candidate.levelFlag;
+        sample.rpy = candidate.imu.rpy;
+        for (std::size_t i = 0; i < kJointCount; ++i) {
+          sample.joint[i].q = candidate.motorState[i].q;
+          sample.joint[i].dq = candidate.motorState[i].dq;
+          sample.joint[i].mode = candidate.motorState[i].mode;
+          sample.joint[i].temperature = candidate.motorState[i].temperature;
         }
-        if (valid && validCount > 0) {
-          valid = now - lastValidNs <= 20000000LL;
-          for (std::size_t i = 0; i < kJointCount && valid; ++i)
-            valid = std::fabs(candidate.motorState[i].q - reference[i]) <= 0.05F;
-        }
-        if (valid) {
-          state = candidate;
-          if (validCount == 0)
-            for (std::size_t i = 0; i < kJointCount; ++i)
-              reference[i] = state.motorState[i].q;
-          lastValidNs = now;
-          for (std::size_t i = 0; i < kJointCount; ++i)
-            sum[i] += state.motorState[i].q;
-          if (++validCount >= requiredCount) {
-            for (std::size_t i = 0; i < kJointCount; ++i)
-              (*standingPose)[i] = static_cast<float>(sum[i] / validCount);
-            std::cout << "Captured " << validCount
-                      << " valid high-level state packets; switching to a "
-                         "low-level impedance hold at the measured pose.\n";
-            return true;
-          }
-        } else {
-          validCount = 0;
-          lastValidNs = 0;
-          sum.fill(0.0);
-        }
+      }
+      if (capture.observe(sample, after.RecvCount, steadyNowNs(), received, standingPose)) {
+        std::cout << "Captured " << capture.count()
+                  << " quiet high-level receive events over at least 200 ms; "
+                     "preparing the seeded low-level hold.\n";
+        return true;
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }

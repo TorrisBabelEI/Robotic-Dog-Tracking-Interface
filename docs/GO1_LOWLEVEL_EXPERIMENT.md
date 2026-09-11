@@ -12,7 +12,10 @@ do not count as hardware acceptance.
 | [4](#chapter-4--single-leg-lift) | Weight transfer and one leg lift | Original dry-run completed and archived; hardware pending Chapter 3 |
 | [5](#chapter-5--four-leg-sequence) | Four sequential leg lifts | Original dry-run completed and archived; hardware pending Chapter 4 |
 
-**Current next step: seeded ground-entry core test in 2.1.4.**
+**Current next step: high-level standing-capture test in 2.1.5.**
+Section 2.1.4 passed twice on Ubuntu; the last result was 1/1 with
+`test_exit=0`, archived at `logs/entry-review-YNGYdJWV/`. Both runs are valid;
+no additional repetition or cleanup is needed.
 Section 2.1.3 passed on Ubuntu: all five support-confirmation checks passed,
 CTest completed 1/1 with `test_exit=0`; report: `logs/support-review-q5unojt4/`.
 Do not repeat that completed check to proceed.
@@ -964,7 +967,7 @@ folder and prior hardware archives; there is nothing to remove from the Pi.
 Passing this step verifies the continuous-confirmation gate only. It does not
 approve the synthetic target or unlock ground hardware modes.
 
-### 2.1.4 Seeded entry continuity and feedback faults — current software test
+### 2.1.4 Seeded entry continuity and feedback faults — completed
 
 Purpose: check the low-level controller's entry logic after a standing seed
 has been supplied. This is the next bounded software check after the passing
@@ -1049,6 +1052,95 @@ support-confirmation input, a calibrated supported endpoint, and validation of
 the high-level capture and mode-switch procedure remain necessary before the
 first hardware handover. Do not remove `--dry-run` from other commands or
 try the locked standing modes after this software test.
+
+### 2.1.5 High-level standing-capture accumulator — current software test
+
+Purpose: test the capture logic that produces the standing seed used by
+2.1.4. Previously this logic existed only in the SDK hardware path, accepted
+joint speeds up to 1.0 rad/s, and had no independent test against repeated
+reads of the same receive buffer. The real hardware path now calls the same
+SDK-independent accumulator exercised here.
+
+The accumulator requires at least 100 new receive events spanning at least
+200 ms, with gaps at most 20 ms, joint speeds at most 0.05 rad/s, and joint
+positions within 0.02 rad of the window's first sample. It also checks high-level
+flag, finite joint/IMU values, command bounds, temperature, and absolute
+roll/pitch at most 0.5 rad. Invalid feedback, excessive motion, counter rollback,
+or a gap resets the window. A 500 Hz stream needs 101 samples to span 200 ms.
+Only a completed window writes the averaged seed; a partial window leaves the
+output unchanged. The surrounding hardware attempt retains its three-second
+deadline.
+
+In the hardware adapter, a usable event requires a successful SDK receive,
+an increased `udpState.RecvCount`, and no increase in flag/CRC errors during
+that call. A send failure or an observed L2+B chord aborts capture before the
+low-level loops start. This test exercises the accumulator with synthetic
+transport counters; it does not exercise those SDK transport/remote branches.
+
+**Limit of this step:** the SDK HighState structure has no low-level-style
+source `tick`. A changed receive counter distinguishes a new receive event
+from a cached buffer read; it does not prove that the upstream controller
+updated the underlying measurement. That transport behavior still needs
+verification on the robot. The existing mode-0 request remains unchanged and
+must not be treated as a verified stand-up command. Neither quiet joint data
+nor this passing test proves load-bearing standing or continuous support
+through the high-level/low-level switch. Ground hardware modes stay locked.
+
+**1. Synchronize on Ubuntu.** After the development changes have been committed
+and pushed through the existing GitHub workflow, run in one local terminal:
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+git status --short
+git pull --ff-only
+ls test/go1_standing_capture_test.cpp
+```
+
+Stop on a failed pull or missing file; do not discard local changes. Keep Go1
+powered off. There is no SSH, robot connection, or Pi deployment in this step.
+
+**2. Build the new offline test target.** Continue in the same terminal:
+
+```bash
+cmake -S . -B /tmp/go1-capture-build -DBUILD_TESTING=ON -DBUILD_SDK_EXAMPLES=OFF
+cmake --build /tmp/go1-capture-build --target go1_standing_capture_test -j2
+```
+
+Both commands must succeed before continuing. This target does not link the
+SDK or open UDP. It executes the accumulator used by the hardware code.
+
+**3. Run once and save the output.**
+
+```bash
+mkdir -p logs
+GO1_CAPTURE_REVIEW=$(mktemp -d "$PWD/logs/capture-review-XXXXXXXX")
+(cd /tmp/go1-capture-build && ctest -R '^go1_standing_capture$' -V) \
+  > "$GO1_CAPTURE_REVIEW/capture-test.txt" 2>&1
+GO1_CAPTURE_STATUS=$?
+cat "$GO1_CAPTURE_REVIEW/capture-test.txt"
+printf 'test_exit=%s\nReports: %s\n' "$GO1_CAPTURE_STATUS" "$GO1_CAPTURE_REVIEW"
+```
+
+Required output:
+
+```text
+[PASS] quiet capture requires sample count and elapsed time
+[PASS] cached data and unsuccessful receives cannot complete capture
+[PASS] movement, invalid feedback, gaps and counter rollback reset capture
+[PASS] elapsed time alone cannot bypass minimum sample count
+Standing capture tests passed (synthetic transport and feedback only).
+```
+
+CTest must report `100% tests passed, 0 tests failed out of 1` with
+`test_exit=0`. A missing test, missing pass line, or build error means stop and
+send the complete output. `No tests were found` is not a passing result.
+
+**4. Send the complete Step 3 output and stop for review.** No CSV or Pi file
+is created. Retain the report directory; no deletion is required. After this
+software check, the remaining work includes the actual support-confirmation
+input, supported endpoint calibration, and a reviewed hardware observation
+procedure for the transport/mode transition. Passing the accumulator test
+alone does not authorize a hardware handover.
 
 ### 2.2 Original Pi rehearsal — completed; reference only
 
