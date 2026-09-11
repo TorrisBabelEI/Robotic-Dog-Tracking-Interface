@@ -249,6 +249,10 @@ public:
   }
   Command emergencyDampingCommand() const { return dampingCommand(); }
   void seedGroundPose(const std::array<float, kJointCount> &pose) {
+    for (std::size_t i = 0; i < kJointCount; ++i)
+      if (!std::isfinite(pose[i]) || pose[i] < kJointMin[i % 3] ||
+          pose[i] > kJointMax[i % 3])
+        throw std::runtime_error("invalid_ground_seed_pose");
     precheckQ_ = pose;
     precheckPoseCaptured_ = true;
   }
@@ -330,6 +334,25 @@ public:
         phase_ != Phase::Complete)
       enterPanic("command_watchdog_over_20ms", hostNs);
     observeRemoteStop(feedback, recvFresh, hostNs);
+    if (isGroundMode(options_.mode) && precheckPoseCaptured_ &&
+        (phase_ == Phase::Precheck || phase_ == Phase::CapturePose)) {
+      if (groundEntryStartNs_ == 0) groundEntryStartNs_ = hostNs;
+      if (watchdogActive || sendResult != 0)
+        enterPanic("ground_entry_command_failure", hostNs);
+      else if ((!hasState || !recvAlive) &&
+               hostNs - groundEntryStartNs_ > 20000000LL)
+        enterPanic("ground_entry_feedback_timeout", hostNs);
+      else if (hasState && recvFresh) {
+        bool valid = recvAlive && tickValid && feedbackReady(feedback, true);
+        for (std::size_t i = 0; i < kJointCount; ++i)
+          valid = valid && std::fabs(feedback.joint[i].q - precheckQ_[i]) <= 0.05F &&
+                  std::fabs(feedback.joint[i].dq) <= 0.05F;
+        for (float angle : feedback.rpy) valid = valid && std::isfinite(angle);
+        valid = valid && std::fabs(feedback.rpy[0]) <= 0.5F &&
+                        std::fabs(feedback.rpy[1]) <= 0.5F;
+        if (!valid) enterPanic("ground_entry_pose_mismatch_or_invalid", hostNs);
+      }
+    }
     if (phase_ != Phase::RemotePreflight)
       applyFeedbackSafety(feedback, hasState, recvFresh, recvAlive, hostNs);
     updateSupport(feedback);
@@ -388,7 +411,9 @@ public:
         enterPanic("precheck_timeout_or_not_lowlevel", hostNs);
       break;
     case Phase::CapturePose:
-      if (!capturePose(feedback)) {
+      if (!recvFresh) {
+        command = precheckCommand(feedback, hasState, recvAlive);
+      } else if (!capturePose(feedback)) {
         enterPanic("capture_pose_kinematics", hostNs);
       } else {
         command = holdCommand(initialQ_);
@@ -664,7 +689,10 @@ private:
   }
   bool capturePose(const Feedback &f) {
     for (std::size_t i = 0; i < kJointCount; ++i)
-      initialQ_[i] = returnQ_[i] = f.joint[i].q;
+      // Keep the already published target through PRECHECK -> HOLD. Replacing
+      // it with a later measurement would introduce a command position step.
+      initialQ_[i] = returnQ_[i] = isGroundMode(options_.mode) && precheckPoseCaptured_
+          ? precheckQ_[i] : f.joint[i].q;
     initialRpy_ = f.rpy;
     for (std::size_t leg = 0; leg < 4; ++leg) {
       const std::size_t b = leg * 3;
@@ -1115,6 +1143,7 @@ private:
   std::string faultReason_, stopSource_;
   std::atomic<bool> doneFlag_{false}, safeHoldReached_{false}, panicReached_{false};
   std::array<float, kJointCount> precheckQ_{{0}}, initialQ_{{0}}, returnQ_{{0}};
+  int64_t groundEntryStartNs_ = 0;
   std::array<float, kJointCount> exitStartQ_{{0}}, exitHoldQ_{{0}};
   Command lastCommand_;
   int64_t exitStartNs_ = 0, exitVerifyNs_ = 0, exitStableStartNs_ = 0;
