@@ -12,7 +12,9 @@ do not count as hardware acceptance.
 | [4](#chapter-4--single-leg-lift) | Weight transfer and one leg lift | Original dry-run completed and archived; hardware pending Chapter 3 |
 | [5](#chapter-5--four-leg-sequence) | Four sequential leg lifts | Original dry-run completed and archived; hardware pending Chapter 4 |
 
-**Current next step: endpoint code development and validation in 2.1.1.**
+**Current next step: archived prone-pose inspection in 2.1.2.**
+Section 2.1.1 passed on Ubuntu: both endpoint tests and the log analyzer
+completed successfully. Do not repeat that completed check to proceed.
 The operator has confirmed that all four original dry-run CSV files and their
 summaries are fully archived on Ubuntu. `handover-SB8m9xb7` and
 `handover-Z6dkjhnB` are two independent archives; retain both. They are not
@@ -671,7 +673,7 @@ The state-machine fixture uses ideal tracking and independently controlled
 support evidence; the integration fixture uses the existing simplified plant.
 Neither models belly contact or proves physical stability.
 
-#### Test the new endpoint now — one Ubuntu terminal
+#### Completed Ubuntu endpoint test — reference commands
 
 Run this new code check on **Ubuntu (`aims-Precision-7780`)**, in the local
 terminal. Do not SSH into the Pi. Go1 can remain powered off. This is the
@@ -758,6 +760,108 @@ Before hardware can be enabled, review/calibrate the final pose and descent,
 provide an independent support-confirmation input with a tested failure path,
 and review the standing capture/takeover sequence. Then revise the first-run
 procedure and the code lock together. Do not remove `--dry-run` to proceed.
+
+### 2.1.2 Inspect the archived prone pose — current step
+
+Purpose: extract a quiet measured pose from the already passing
+`remote_preflight_fix_02.csv`, and compare all 12 measured joint ranges with
+our command bounds. This supplies evidence for endpoint design; it does not
+calibrate a lie-down target or prove belly contact. Do not copy or clamp these
+measurements into motor commands. A calf outside the command bounds is a
+finding to review, not a reason to widen the bounds.
+
+Run all steps below in **one Ubuntu terminal (`aims-Precision-7780`)**.
+Go1 can remain powered off. No Pi deployment, SSH, MOCAP, build, or new robot
+run is needed. Stop after this section and send the results before proceeding.
+
+**1. Obtain the new offline script.** After the development changes have been
+committed and pushed through the existing GitHub workflow, run on Ubuntu:
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+git status --short
+git pull --ff-only
+ls experiment/inspect_prone_pose.py
+conda activate dog_ctrl
+```
+
+Stop on a failed pull or missing script; retain the output. Do not discard
+local changes. The script uses only the Python standard library.
+
+**2. Locate and select the archived passing CSV.** This searches Ubuntu logs
+only and asks you to select a numbered path if multiple archives exist:
+
+```bash
+mapfile -d '' GO1_POSE_LOGS < <(find "$PWD/logs" -type f -name 'remote_preflight_fix_02.csv' -print0)
+GO1_POSE_LOG=''
+if [ "${#GO1_POSE_LOGS[@]}" -eq 0 ]; then
+  echo 'STOP: archived remote_preflight_fix_02.csv not found; send this output'
+elif [ "${#GO1_POSE_LOGS[@]}" -eq 1 ]; then
+  GO1_POSE_LOG="${GO1_POSE_LOGS[0]}"
+else
+  PS3='Select the passing preflight archive number: '
+  select GO1_POSE_LOG in "${GO1_POSE_LOGS[@]}"; do
+    [ -n "$GO1_POSE_LOG" ] && break
+  done
+fi
+printf 'Selected CSV: %s\n' "$GO1_POSE_LOG"
+```
+
+Use Ubuntu's normal Bash terminal for these commands. If no file is found,
+stop and send the output; do not generate a replacement hardware run. If you
+previously stored the archive outside `logs`, send its location for the next
+instruction. Keep the selected original CSV unchanged.
+
+**3. Run the existing summary and the new pose inspection.** Continue only
+with a selected existing CSV. Each invocation creates a new report directory:
+
+```bash
+if [ -n "$GO1_POSE_LOG" ] && [ -f "$GO1_POSE_LOG" ]; then
+  GO1_POSE_REVIEW=$(mktemp -d "$PWD/logs/prone-review-XXXXXXXX")
+  sha256sum "$GO1_POSE_LOG" > "$GO1_POSE_REVIEW/source.sha256"
+  python3 experiment/analyze_lowlevel_log.py "$GO1_POSE_LOG" --no-plots \
+    --summary "$GO1_POSE_REVIEW/preflight.summary.csv" \
+    > "$GO1_POSE_REVIEW/preflight.txt" 2>&1
+  GO1_SUMMARY_STATUS=$?
+  python3 experiment/inspect_prone_pose.py "$GO1_POSE_LOG" \
+    > "$GO1_POSE_REVIEW/prone-pose.txt" 2>&1
+  GO1_POSE_STATUS=$?
+  cat "$GO1_POSE_REVIEW/source.sha256"
+  cat "$GO1_POSE_REVIEW/preflight.txt"
+  cat "$GO1_POSE_REVIEW/prone-pose.txt"
+  printf 'summary_exit=%s pose_exit=%s\nReports: %s\n' \
+    "$GO1_SUMMARY_STATUS" "$GO1_POSE_STATUS" "$GO1_POSE_REVIEW"
+else
+  echo 'STOP: no selected CSV; complete Step 2 first'
+fi
+```
+
+The inspector selects the first continuous quiet window lasting at least two
+seconds, with at least 900 fresh low-level samples, host/tick gaps no greater
+than 20 ms, no abort/watchdog, all joint speeds at most 0.05 rad/s, and joint
+position/roll/pitch ranges at most 0.03 rad. These are offline screening
+criteria, not physical stability or contact acceptance criteria. A `[STOP]`
+means the data needs review; it does not automatically invalidate the earlier
+communication preflight. Both exit codes should be `0` for a completed report.
+
+The table must contain FR/FL/RR/RL joints 0/1/2 (hip/thigh/calf), in radians.
+`OUTSIDE_DO_NOT_REPLAY` explicitly flags measured values outside the current
+command bounds. Even `WITHIN` does not approve a command target. The script
+cannot distinguish a synthetic CSV from hardware data, so use the exact
+archived preflight file and retain its hash and provenance.
+
+**4. Send the result and the physical observation.** Send all Step 3 terminal
+output (including the table, exit codes, and report path). Also state whether,
+during the original preflight, the belly/body was visibly supported by the
+floor or a support pad, whether anyone held the robot, and whether it moved.
+If you cannot recall, say so; do not infer contact from joint angles or foot
+forces. No new measurement is requested in this step.
+
+**Stop here for review.** Retain the original CSV and the report directory;
+there are no new Pi files to delete. The next increment will use these results
+to resolve the final-pose/support evidence, then test the real support input
+and standing takeover before writing the first hardware handover procedure.
+The existing ground hardware lock remains in effect.
 
 ### 2.2 Original Pi rehearsal — completed; reference only
 
