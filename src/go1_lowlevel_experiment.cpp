@@ -466,10 +466,13 @@ public:
                   && std::fabs(feedback.joint[i].dq) < 0.05;
       settled = settled && std::fabs(feedback.rpy[0] - initialRpy_[0]) < 0.10
                         && std::fabs(feedback.rpy[1] - initialRpy_[1]) < 0.10;
-      // Only new robot feedback advances the verification window. A repeated
-      // control sample cannot manufacture a second of stability.
+      // Support and stable feedback must overlap for the whole dwell. A brief
+      // confirmation after a long quiet hold must not authorize damping.
+      // Withdrawal clears the dwell even between fresh feedback packets.
+      if (!floorSupportObserved) exitStableStartNs_ = 0;
+      // Only new robot feedback can start the verification window.
       if (recvFresh) {
-        if (!settled) exitStableStartNs_ = 0;
+        if (!settled || !floorSupportObserved) exitStableStartNs_ = 0;
         else if (exitStableStartNs_ == 0) exitStableStartNs_ = hostNs;
       }
       exitStableS_ = exitStableStartNs_ > 0

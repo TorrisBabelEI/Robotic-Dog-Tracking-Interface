@@ -90,6 +90,43 @@ void missingSupport() {
   require(t.command.joint[1].kp > 0, "absent support must not drop impedance");
 }
 
+void supportConfirmation() {
+  Fixture t;
+  t.reach(Phase::ExitVerify);
+  for (int i = 0; i < 600; ++i) t.tick(false);
+  t.tick(true);
+  require(t.core.phase() == Phase::ExitVerify,
+          "one-cycle confirmation after quiet hold must not authorize exit");
+  std::cout << "[PASS] brief confirmation after quiet hold cannot exit\n";
+  for (int i = 0; i < 300; ++i) t.tick(true);
+  t.tick(false, false); // withdrawal must work even without a new robot packet
+  for (int i = 0; i < 300; ++i) t.tick(true);
+  require(t.core.phase() == Phase::ExitVerify,
+          "withdrawn support must restart the full dwell");
+  std::cout << "[PASS] withdrawal between feedback packets restarts dwell\n";
+  t.f.joint[1].dq = 0.06F;
+  t.tick(true);
+  for (int i = 0; i < 490; ++i) t.tick(true);
+  require(t.core.phase() == Phase::ExitVerify,
+          "motion during confirmation must restart the full dwell");
+  std::cout << "[PASS] motion during confirmation restarts dwell\n";
+  for (int i = 0; i < 30 && t.core.phase() == Phase::ExitVerify; ++i) t.tick(true);
+  require(t.core.phase() == Phase::ExitDamping,
+          "continuous support and quiet feedback must authorize damping");
+  t.damping();
+  std::cout << "[PASS] continuous support and quiet feedback authorize damping\n";
+
+  Fixture flicker;
+  flicker.reach(Phase::ExitVerify);
+  for (int i = 0; i < 2600; ++i) flicker.tick(i % 2 == 0);
+  require(flicker.core.phase() == Phase::ExitHold && !flicker.core.done(),
+          "intermittent confirmation must time out into latched hold");
+  require(flicker.core.faultReason() == "exit_support_not_confirmed" &&
+              flicker.command.joint[1].kp > 0,
+          "timed out confirmation must preserve impedance");
+  std::cout << "[PASS] intermittent confirmation times out into hold\n";
+}
+
 void cancel() {
   for (Phase phase : {Phase::ExitLower, Phase::ExitVerify}) {
     Fixture t; t.reach(phase);
@@ -164,7 +201,14 @@ void hardwareLock() {
   }
 }
 }
-int main() {
+int main(int argc, char **argv) {
+  if (argc == 2 && std::string(argv[1]) == "--support-confirmation-only") {
+    try { supportConfirmation(); return 0; }
+    catch (const std::exception &error) {
+      std::cerr << "[FAIL] " << error.what() << '\n'; return 1;
+    }
+  }
+  if (argc != 1) return 2;
   struct TestCase { const char *name; void (*run)(); };
   const TestCase cases[] = {
       {"normal descent -> support verification -> damping -> completion", normal},

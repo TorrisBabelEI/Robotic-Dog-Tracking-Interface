@@ -12,7 +12,7 @@ do not count as hardware acceptance.
 | [4](#chapter-4--single-leg-lift) | Weight transfer and one leg lift | Original dry-run completed and archived; hardware pending Chapter 3 |
 | [5](#chapter-5--four-leg-sequence) | Four sequential leg lifts | Original dry-run completed and archived; hardware pending Chapter 4 |
 
-**Current next step: archived prone-pose inspection in 2.1.2.**
+**Current next step: support-confirmation dwell test in 2.1.3.**
 Section 2.1.1 passed on Ubuntu: both endpoint tests and the log analyzer
 completed successfully. Do not repeat that completed check to proceed.
 The operator has confirmed that all four original dry-run CSV files and their
@@ -641,11 +641,14 @@ and 0.10 rad relative roll/pitch limit during the endpoint.
 Support verification requires new valid feedback, all joint errors below
 0.05 rad, all joint speeds below 0.05 rad/s, and relative roll/pitch below
 0.10 rad for at least one second, together with an independent, current
-floor-support observation. Foot-force unloading, elapsed time, or reaching
+floor-support observation throughout that same one-second interval (strengthened
+in 2.1.3). Withdrawal resets the interval, including between fresh robot
+packets. Foot-force unloading, elapsed time, or reaching
 the target alone cannot prove that the belly is supported. An observation
 before this stage is not latched as permission. The development simulator
 explicitly supplies a synthetic observation; there is currently no hardware
-input for it. CSV adds `exit_support_confirmed` and `exit_stable_s`; a true
+input for it. CSV adds `exit_support_confirmed` and `exit_stable_s`; the latter now measures
+the overlapping stable-feedback/support interval. A true
 flag in this fixture records simulated evidence only.
 
 Cancellation and faults have distinct outcomes:
@@ -761,7 +764,7 @@ provide an independent support-confirmation input with a tested failure path,
 and review the standing capture/takeover sequence. Then revise the first-run
 procedure and the code lock together. Do not remove `--dry-run` to proceed.
 
-### 2.1.2 Inspect the archived prone pose — current step
+### 2.1.2 Inspect the archived prone pose — completed
 
 Purpose: extract a quiet measured pose from the already passing
 `remote_preflight_fix_02.csv`, and compare all 12 measured joint ranges with
@@ -862,6 +865,101 @@ there are no new Pi files to delete. The next increment will use these results
 to resolve the final-pose/support evidence, then test the real support input
 and standing takeover before writing the first hardware handover procedure.
 The existing ground hardware lock remains in effect.
+
+### 2.1.3 Continuous support confirmation — current software test
+
+**Accepted evidence from 2.1.2.** The reported Ubuntu extraction completed with
+`summary_exit=0 pose_exit=0`, selecting 1,001 fresh samples over approximately
+two seconds. The original file is
+`~/Yuxuan/Robotic-Dog-Tracking-Interface/logs/downloaded/remote_preflight_fix_02.csv`;
+the report directory is `logs/prone-review-idhuW79a/`. Reported SHA-256:
+
+```text
+b59dd4240125e147056c98399c6f8307a5599420bcb29a535600e438a9fec527
+```
+
+| Joint | FR median | FL median | RR median | RL median |
+| --- | ---: | ---: | ---: | ---: |
+| Hip (rad) | -0.314886 | 0.279764 | -0.296538 | 0.303199 |
+| Thigh (rad) | 1.289278 | 1.304901 | 1.304114 | 1.274745 |
+| Calf (rad) | -2.794414 | -2.797079 | -2.799137 | -2.767608 |
+
+The operator reports entering the factory prone posture with L2+A, then
+switching to damping with L2+B. There was no visible additional movement,
+the trunk remained approximately level, and nobody touched the robot. The
+operator believes the body rested directly on the floor; independent contact
+measurement was not performed. This supports use as a natural prone reference,
+not proof of contact at our different simulation target. All four measured
+calves are below the command lower bound of -2.721 rad. Do not replay the
+measurements, clamp them into a target, or widen the bound to match them.
+
+**What changes now.** Previously, one true support sample after one second of
+quiet joints could authorize normal damping. The development controller now
+requires support to remain true while feedback remains stable for a full
+second. Withdrawal restarts the dwell even if no new robot packet arrives in
+that cycle; joint motion also restarts it. Intermittent confirmation still
+reaches the existing five-second timeout and latched impedance hold. Early
+confirmation during descent does not carry into verification.
+
+This tests the receiving control logic using injected support observations.
+It does not implement a physical contact sensor or an operator input device.
+The actual input, target calibration, and takeover review remain subsequent
+work. L2+B retains emergency-stop semantics; it is not a normal support-confirmation
+button. No new hardware run or repeat of 2.1.2 is requested.
+
+**1. Synchronize on Ubuntu.** After committing and pushing the development
+changes through the existing GitHub workflow, use one local Ubuntu terminal:
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+git status --short
+git pull --ff-only
+```
+
+Stop if the pull fails. Do not discard local changes. Keep Go1 powered off;
+there is no SSH or Pi deployment in this test.
+
+**2. Build the offline control-core test.** Continue in the same terminal:
+
+```bash
+cmake -S . -B /tmp/go1-support-build -DBUILD_TESTING=ON -DBUILD_SDK_EXAMPLES=OFF
+cmake --build /tmp/go1-support-build --target go1_ground_exit_test -j2
+```
+
+Both commands must finish successfully before Step 3. The test target does
+not link the Unitree SDK or open UDP. The existing Pi binary is unchanged.
+
+**3. Run the new support-confirmation test and save its output.**
+
+```bash
+mkdir -p logs
+GO1_SUPPORT_REVIEW=$(mktemp -d "$PWD/logs/support-review-XXXXXXXX")
+(cd /tmp/go1-support-build && ctest -R '^go1_ground_support_confirmation$' -V) \
+  > "$GO1_SUPPORT_REVIEW/support-test.txt" 2>&1
+GO1_SUPPORT_STATUS=$?
+cat "$GO1_SUPPORT_REVIEW/support-test.txt"
+printf 'test_exit=%s\nReports: %s\n' "$GO1_SUPPORT_STATUS" "$GO1_SUPPORT_REVIEW"
+```
+
+Required output includes these five lines:
+
+```text
+[PASS] brief confirmation after quiet hold cannot exit
+[PASS] withdrawal between feedback packets restarts dwell
+[PASS] motion during confirmation restarts dwell
+[PASS] continuous support and quiet feedback authorize damping
+[PASS] intermittent confirmation times out into hold
+```
+
+CTest must report `100% tests passed, 0 tests failed out of 1`, with
+`test_exit=0`. `No tests were found` is not a pass, even if the exit code is
+zero. Any missing pass line, build failure, or test failure means stop and
+retain the output. No CSV is generated by this fixture.
+
+**4. Send the complete Step 3 output.** Stop here for review. Keep the report
+folder and prior hardware archives; there is nothing to remove from the Pi.
+Passing this step verifies the continuous-confirmation gate only. It does not
+approve the synthetic target or unlock ground hardware modes.
 
 ### 2.2 Original Pi rehearsal — completed; reference only
 
