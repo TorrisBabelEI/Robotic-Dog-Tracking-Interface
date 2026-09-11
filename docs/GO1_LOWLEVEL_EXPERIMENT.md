@@ -12,7 +12,15 @@ do not count as hardware acceptance.
 | [4](#chapter-4--single-leg-lift) | Weight transfer and one leg lift | Original dry-run completed and archived; hardware pending Chapter 3 |
 | [5](#chapter-5--four-leg-sequence) | Four sequential leg lifts | Original dry-run completed and archived; hardware pending Chapter 4 |
 
-**Current next step: high-level standing-capture test in 2.1.5.**
+**Current next step: passive factory-traffic observation in 2.1.7 (no lifting rig).**
+The operator confirmed no support equipment and requested continued development
+without external lifting. Section 2.1.6 is closed; lack of a rig is not a
+project-wide stop condition. The old standing-handover executable remains
+locked because its transition and endpoint are still unvalidated. The new
+route and the next actual-robot observation are specified in 2.1.7.
+Section 2.1.5 passed twice on Ubuntu: four checks, 1/1 test, and
+`test_exit=0` in both runs. Reports are `logs/capture-review-VrsaobOT/` and
+`logs/capture-review-l6xWpjfG/`. Retain either or both; no repeat is required.
 Section 2.1.4 passed twice on Ubuntu; the last result was 1/1 with
 `test_exit=0`, archived at `logs/entry-review-YNGYdJWV/`. Both runs are valid;
 no additional repetition or cleanup is needed.
@@ -1053,7 +1061,7 @@ the high-level capture and mode-switch procedure remain necessary before the
 first hardware handover. Do not remove `--dry-run` from other commands or
 try the locked standing modes after this software test.
 
-### 2.1.5 High-level standing-capture accumulator — current software test
+### 2.1.5 High-level standing-capture accumulator — completed
 
 Purpose: test the capture logic that produces the standing seed used by
 2.1.4. Previously this logic existed only in the SDK hardware path, accepted
@@ -1141,6 +1149,184 @@ software check, the remaining work includes the actual support-confirmation
 input, supported endpoint calibration, and a reviewed hardware observation
 procedure for the transport/mode transition. Passing the accumulator test
 alone does not authorize a hardware handover.
+
+### 2.1.6 Identify the physical support setup — closed: none available
+
+Purpose: determine the available physical arrangement before writing endpoint
+calibration and the first live takeover procedure. The completed software
+checks do not establish physical support. The observed factory prone calves
+(-2.768 to -2.799 rad) exceed our command range; the simulated -2.70 rad target
+has never been shown to place the body on the floor. A level trunk and a quiet
+pose alone cannot resolve that difference.
+
+This step is an equipment inventory, not a powered robot experiment or an
+approval of a particular rig. There is no new test executable, deployment,
+SSH command, or robot command to run. Do not repeat 2.1.1–2.1.5.
+
+**1. Leave the robot powered off in its existing floor-supported prone pose.**
+Do not stand it up, lift it, put equipment underneath it, or try to force its
+joints to the simulated target for this check. The task is to identify available
+equipment before specifying how it should be used.
+
+**2. Inspect the equipment already available in the lab.** Determine whether
+there is a robot support stand, adjustable body support, or rated overhead
+support/harness intended to carry this robot. If available, record its model
+or description, rated capacity if known, adjustment range, and intended body
+contact/attachment points. Unknown details can be marked unknown. A loose
+stack of objects or a person holding the robot is not an established setup.
+Do not purchase, assemble, or load-test a rig as part of this step.
+
+**3. Record observation conditions.** State whether an operator can see the
+body/support contact from beside the robot without reaching between the legs,
+and whether a second operator is available for a future test. These details
+will inform the support-confirmation input and stop procedure; they are not
+assumed to be satisfied by the earlier hands-off preflight.
+
+**4. Send this short report.** Copy and complete the following text; there is
+no terminal command to execute:
+
+```text
+Available support equipment: none / description
+Model and rated capacity: known values / unknown / not applicable
+Height adjustment and attachment/contact points: description / unknown
+Can body/support contact be seen from beside the robot?: yes / no / unknown
+Second operator available for a future test?: yes / no
+```
+
+**Result and revised decision:** the operator reports no support equipment and
+accepts some experimental risk while seeking to avoid mechanical damage.
+Continue with 2.1.7 rather than requiring equipment purchase. This acceptance
+cannot establish a guarantee against damage, nor does it make the old
+standing-transition implementation ready for use.
+
+### 2.1.7 No-lift route: passive observation of factory traffic — current step
+
+#### Research conclusion and selected route
+
+A no-lift development route is technically plausible. Use a **prone start,
+small four-foot body rise, return close to the floor, and gradual support-torque
+release**, all within one low-level controller. Increase height only after the
+previous rise/return has been reviewed. This is the selected engineering
+proposal, not a validated hardware trajectory. Do not start by switching
+controllers while the robot is already standing.
+
+The source review and the proposed sequence are detailed in
+[GO1_NO_LIFT_PLAN.md](GO1_NO_LIFT_PLAN.md). Factory high-level modes provide
+an alternative for initial motion observation, but do not provide custom joint
+torque tracking. We will first observe this robot's own factory trajectory;
+then implement the low-height entry/return using that evidence. Existing
+synthetic tests remain useful regression tests and need not be repeated.
+
+The next observation is deliberately passive: check whether the Pi can see
+factory UDP packets while the robot remains prone. Packet presence/layout is
+not yet known. A positive result enables a subsequent single factory
+stand-up/lie-down recording. A negative result calls for a different recording
+interface, not extra motor commands to provoke traffic. Do not perform that
+standing cycle during this initial 15-second capture.
+
+**1. Prepare Ubuntu and the robot.** Read this entire section before starting.
+No new robot executable needs compiling or deploying. Use the normal factory
+controller; the robot must already be prone on a flat, nonslip floor, in the
+factory damping state reached by the familiar L2+A then L2+B procedure. Use
+normal startup if powering on is necessary; startup can itself cause motion.
+Do not enter developer/basic mode with L1+L2+Start. Do not run our low-level
+experiment, stop `Legged_sport`, or stop the Programming Module. No one should
+lift the robot. Keep the space around its legs clear.
+
+On **Ubuntu**, synchronize the documentation through the existing GitHub
+workflow if needed, then connect to Go1 Wi-Fi and open a Pi terminal:
+
+```bash
+ssh pi@192.168.12.1
+```
+
+**2. On the Pi, check the capture tools and existing processes.**
+
+```bash
+command -v tcpdump
+command -v timeout
+pgrep -af 'Legged_sport|programming[.]py|go1_lowlevel_experiment|example_position|example_torque|example_velocity|example_walk'
+sudo ss -Huanp
+```
+
+Keep this output. `tcpdump` and `timeout` must each print a path. If either is
+missing, report that output for a tool-installation instruction; do not run
+an SDK example in its place. If one of our controllers or an SDK motion example
+is active, do not start this capture or kill the process blindly; report its
+state first. The factory processes should remain running. Another user program
+sending robot commands also needs to be identified before continuing.
+
+**3. Capture once for 15 seconds while the robot remains prone.** In that same
+**Pi terminal**:
+
+```bash
+mkdir -p ~/Robotic-Dog-Tracking-Interface/logs
+GO1_NATIVE_DIR=$(mktemp -d "$HOME/Robotic-Dog-Tracking-Interface/logs/native-observe-XXXXXXXX")
+sudo timeout --signal=INT --kill-after=3s 15s \
+  tcpdump -Z "$(id -un)" -p -n -i any -s 0 -B 4096 -U -c 15000 \
+  -w "$GO1_NATIVE_DIR/native-prone.pcap" \
+  'udp and ((host 192.168.123.10 and port 8007) or (host 192.168.123.161 and port 8082))' \
+  2> "$GO1_NATIVE_DIR/capture.txt"
+GO1_NATIVE_STATUS=$?
+cat "$GO1_NATIVE_DIR/capture.txt"
+printf 'capture_exit=%s\nPi archive: %s\n' "$GO1_NATIVE_STATUS" "$GO1_NATIVE_DIR"
+```
+
+Do not press mode-change buttons during the capture. `tcpdump` listens through
+a packet-capture socket: it does not bind the SDK's UDP source port or publish
+HighCmd/LowCmd. It does add capture/disk load, so this check is short and bounded
+by both time and packet count. Exit `124` is expected when `timeout` ends the
+15-second capture; `0` is expected if the packet limit is reached first. Other
+exit codes, permission errors, or missing files require review. Captured packet
+counts and kernel drops are printed in `capture.txt`; zero packets is a useful
+negative observation, not permission to send a motor command.
+
+**4. Inspect a short packet summary and make the archive readable.** Still on
+**Pi**, after the capture command has ended:
+
+```bash
+sudo chown "$(id -u):$(id -g)" "$GO1_NATIVE_DIR/native-prone.pcap"
+tcpdump -nn -tt -r "$GO1_NATIVE_DIR/native-prone.pcap" -c 20 \
+  > "$GO1_NATIVE_DIR/packet-summary.txt" 2>&1
+cat "$GO1_NATIVE_DIR/packet-summary.txt"
+sha256sum "$GO1_NATIVE_DIR/native-prone.pcap"
+printf 'Copy this Pi archive path: %s\n' "$GO1_NATIVE_DIR"
+```
+
+This is offline reading of the capture, not another robot run. Preserve errors
+if the file could not be created. Addresses and packet lengths show which
+links are observable; they do not yet establish a decoded joint trajectory.
+Capturing on `any` can also include duplicate observations of a packet; packet
+counts must not be treated as unique feedback frequency.
+
+**5. Copy the archive to Ubuntu.** In a separate **Ubuntu terminal**, run these
+commands and paste the exact Pi archive path printed in Step 4 when prompted:
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+mkdir -p logs/factory-observation
+GO1_NATIVE_LOCAL=$(mktemp -d "$PWD/logs/factory-observation/prone-XXXXXXXX")
+read -r -p 'Paste the complete Pi archive path from Step 4: ' GO1_NATIVE_REMOTE
+if [[ "$GO1_NATIVE_REMOTE" =~ ^/home/pi/Robotic-Dog-Tracking-Interface/logs/native-observe-[A-Za-z0-9]+$ ]]; then
+  scp -r "pi@192.168.12.1:$GO1_NATIVE_REMOTE/." "$GO1_NATIVE_LOCAL/" && \
+  sha256sum "$GO1_NATIVE_LOCAL/native-prone.pcap"
+  printf 'Ubuntu archive: %s\n' "$GO1_NATIVE_LOCAL"
+else
+  echo 'STOP: unexpected archive path; retain the Pi output for review'
+fi
+```
+
+The SHA-256 on Ubuntu must match Step 4. Keep the Pi copy until the archive is
+verified; no deletion is required now. No factory module was stopped, so no
+module-restoration command is needed. If ending the session, shut down only
+with the robot still fully prone using the familiar normal battery procedure.
+
+**6. Send the result.** Send Steps 2–4 terminal output and the Ubuntu checksum
+and archive path. The PCAP will be needed for offline decoding; retain it and
+attach it if practical. After reviewing which packets are available, the next
+instruction will record one factory rise/return cycle or use an alternative
+observation interface. No rig purchase or repeated synthetic rehearsal is
+required to proceed with this route.
 
 ### 2.2 Original Pi rehearsal — completed; reference only
 
