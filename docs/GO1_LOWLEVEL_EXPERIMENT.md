@@ -13,6 +13,13 @@ do not count as hardware acceptance.
 | [5](#chapter-5--four-leg-sequence) | Four sequential leg lifts | Original dry-run completed and archived; hardware pending Chapter 4 |
 
 **Current next step: factory return-to-prone observation in 2.1.8 (no lifting rig).**
+Go directly to [2.1.8](#218-factory-return-to-prone-and-damping--current-step).
+This is a new passive recording of the factory-controlled prone endpoint,
+not another `remote-preflight` or `ground-handover` run. Reuse `tcpdump` on
+the Pi and `experiment/decode_native_go1_pcap.py` on Ubuntu. No new Pi
+controller build or deployment is required. If Go1 is already prone, record
+it there; do not stand it up merely to obtain a descent recording.
+
 The operator confirmed no support equipment and requested continued development
 without external lifting. Section 2.1.6 is closed; lack of a rig is not a
 project-wide stop condition. The old standing-handover executable remains
@@ -1439,6 +1446,33 @@ required to proceed with this route.
 
 ### 2.1.8 Factory return to prone and damping — current step
 
+**What to do next:** make one passive recording using the steps below, then
+download and decode it on Ubuntu. The factory remote controls the robot;
+our program does not send motor commands during this observation. Do not
+reuse the old `remote-preflight` or `ground-handover` command.
+
+**Before Step 1, prepare the two terminals.** On Ubuntu, from the repository:
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+git pull --ff-only
+ls experiment/decode_native_go1_pcap.py
+```
+
+If synchronization fails or the decoder is missing, resolve that before
+recording. Connect Ubuntu to the Go1 network. In **terminal 1**, log into Pi:
+
+```bash
+ssh pi@192.168.12.1
+```
+
+Run Steps 2 and 4 in this Pi session. Keep **terminal 2 on Ubuntu** for Step 5.
+Step 3 is performed with the original remote while terminal 1 is capturing.
+Read the posture branch in Step 1 before starting the capture. Do not stop
+the Programming Module or free port 8090 for this procedure: passive capture
+does not claim that SDK port. If a custom controller is still running, do not
+begin the factory observation until its state and exit have been resolved.
+
 **Accepted baseline:** the file called `native-prone.pcap` was actually recorded
 while standing. Its SHA-256 is
 `a1d5d005c33a2aae89e36d5beb906735112cda483e4c1d109cd033f966212ff3`.
@@ -1539,6 +1573,10 @@ not a reason to repeat robot motion. The decoder intentionally rejects other
 wire layouts and does not overwrite an existing output directory. No custom
 low-level movement is authorized by passing the CRC check; the next controller
 change depends on reviewing the endpoint and transition data.
+
+Keep both Pi and Ubuntu copies of this new observation until decoding and
+trajectory review are complete. No cleanup or repeat capture is requested at
+this stage. The earlier preflight and software-test archives remain accepted.
 
 ### 2.2 Original Pi rehearsal — completed; reference only
 
