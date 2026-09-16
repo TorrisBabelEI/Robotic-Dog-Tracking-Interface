@@ -7,24 +7,24 @@ do not count as hardware acceptance.
 | Chapter | Experiment | Current status |
 | --- | --- | --- |
 | [1](#chapter-1--remote-preflight) | Communication and remote preflight | Reported passing run: `remote_preflight_fix_02.csv` |
-| [2](#chapter-2--ground-handover) | Standing takeover and 10-second hold | Original dry-run completed and archived twice; hardware locked |
+| [2](#chapter-2--ground-handover) | Standing takeover and 10-second hold | Factory return accepted; prone low-rise software test next; hardware locked |
 | [3](#chapter-3--squat-and-return) | Four-leg half-squat and return | Original dry-run completed and archived; hardware pending Chapter 2 |
 | [4](#chapter-4--single-leg-lift) | Weight transfer and one leg lift | Original dry-run completed and archived; hardware pending Chapter 3 |
 | [5](#chapter-5--four-leg-sequence) | Four sequential leg lifts | Original dry-run completed and archived; hardware pending Chapter 4 |
 
-**Current next step: factory return-to-prone observation in 2.1.8 (no lifting rig).**
-Go directly to [2.1.8](#218-factory-return-to-prone-and-damping--current-step).
-This is a new passive recording of the factory-controlled prone endpoint,
-not another `remote-preflight` or `ground-handover` run. Reuse `tcpdump` on
-the Pi and `experiment/decode_native_go1_pcap.py` on Ubuntu. No new Pi
-controller build or deployment is required. If Go1 is already prone, record
-it there; do not stand it up merely to obtain a descent recording.
+**Current next step: run the Ubuntu-only software gate in 2.1.9; do not connect
+to the Pi or repeat robot motion.** Go directly to
+[2.1.9](#219-prone-low-rise-software-gate--current-step).
+The factory return capture and the remembered physical observation are now
+accepted. The new `prone-low-rise` state machine remains dry-run-only and its
+hardware CLI is deliberately locked before UDP initialization or the `ARM`
+prompt.
 
 The operator confirmed no support equipment and requested continued development
 without external lifting. Section 2.1.6 is closed; lack of a rig is not a
 project-wide stop condition. The old standing-handover executable remains
 locked because its transition and endpoint are still unvalidated. The new
-route is specified in 2.1.7; the next actual-robot observation is in 2.1.8.
+route is specified in 2.1.7; its first implementation gate is in 2.1.9.
 Section 2.1.5 passed twice on Ubuntu: four checks, 1/1 test, and
 `test_exit=0` in both runs. Reports are `logs/capture-review-VrsaobOT/` and
 `logs/capture-review-l6xWpjfG/`. Retain either or both; no repeat is required.
@@ -1444,9 +1444,47 @@ instruction will record one factory rise/return cycle or use an alternative
 observation interface. No rig purchase or repeated synthetic rehearsal is
 required to proceed with this route.
 
-### 2.1.8 Factory return to prone and damping — current step
+### 2.1.8 Factory return to prone and damping — completed
 
-**What to do next:** make one passive recording using the steps below, then
+**Received capture; do not repeat it.** The supplied `return-CxCtzXzf` archive
+contains a valid 39.86-second recording with PCAP SHA-256
+`91271ff4c5bb79d85082a5c83d4d93e095157c21766c4fdd89b79d4e46991b8e`.
+All 39,859 state packets and 19,929 command packets passed CRC checks, and
+tcpdump reported zero kernel drops. Independent re-decoding reproduced the
+supplied summary exactly.
+
+The packets show quiet standing until approximately 9.79 seconds, a factory
+lie-down command through 12.83 seconds, and a switch at 15.17 seconds from
+`Kp=50, Kd=3` position control to `Kp=0, Kd=2` damping. Damping caused
+additional settling: peak post-switch joint speed was 1.845 rad/s, with the
+largest motion concentrated in the next 0.92 seconds. The final feedback is
+very quiet, but three calf positions are approximately 0.094–0.100 rad below
+the existing -2.70 rad development target and below the SDK command limit.
+Do not copy these feedback values into a command target or widen that limit.
+See [GO1_NATIVE_RETURN_ANALYSIS.md](GO1_NATIVE_RETURN_ANALYSIS.md).
+
+The archive's `observation.txt` contains the commands following its interactive
+prompt rather than a physical observation, but the operator subsequently
+supplied the missing facts from memory:
+
+```text
+Initial posture: Standing; L2+A used: yes; trunk fully on floor before L2+B: yes; motion after damping: nothing but lie flat on the ground; Sound: None
+```
+
+Together with the valid telemetry, this completes 2.1.8. No abnormal motion
+beyond settling flat and no sound were reported. Slip and impact were not
+listed as separate events. Do not repeat the motion merely to repair the text
+file. To repair the accepted Ubuntu archive record without touching the PCAP,
+run this optional command on Ubuntu:
+
+```bash
+printf '%s\n' 'Initial posture: Standing; L2+A used: yes; trunk fully on floor before L2+B: yes; motion after damping: nothing but lie flat on the ground; Sound: None' \
+  > /home/aims/Yuxuan/Robotic-Dog-Tracking-Interface/logs/factory-observation/return-CxCtzXzf/observation.txt
+```
+
+The procedure below is retained as reference.
+
+**Reference procedure:** make one passive recording using the steps below, then
 download and decode it on Ubuntu. The factory remote controls the robot;
 our program does not send motor commands during this observation. Do not
 reuse the old `remote-preflight` or `ground-handover` command.
@@ -1485,6 +1523,20 @@ Do not repeat standing capture or previous synthetic tests.
 **1. Prepare one factory-only observation.** Keep all factory services running.
 Do not start our low-level executable or enter developer mode. Use a flat,
 nonslip floor with space for the normal leg motion. Read Steps 2–3 first.
+In the Pi terminal, run this read-only guard before starting the capture:
+
+```bash
+if pgrep -af 'go1_lowlevel_experiment|example_(position|torque|velocity|walk)'; then
+  echo 'STOP: a custom low-level controller is still running; send this output'
+else
+  echo 'PASS: no known custom low-level controller is running'
+fi
+```
+
+Proceed only when the `PASS` line is printed. `programming.py`, `Legged_sport`,
+and the other factory services are intentionally not included in this check;
+do not stop them for the passive observation.
+
 If the robot is already standing under its normal factory controller, record
 one familiar **L2+A lie-down**, followed by **L2+B damping only after the robot
 has finished lying down**. No lifting is required.
@@ -1529,12 +1581,24 @@ output, including drops or errors. The timeout stops tcpdump only; it does not
 change robot mode. Record whether the trunk reached the floor, whether damping
 caused additional motion, and any slip, impact, or unusual sound.
 
-**4. Save context and checksum on Pi.** After capture ends:
+**4. Save context and checksum on Pi.** After capture ends, first run only:
 
 ```bash
 sudo chown "$(id -u):$(id -g)" "$GO1_RETURN_DIR/native-return.pcap"
-read -r -p 'Initial posture; buttons used; final posture; motion after damping: ' GO1_RETURN_NOTE
-printf '%s\n' "$GO1_RETURN_NOTE" > "$GO1_RETURN_DIR/observation.txt"
+```
+
+Then paste this single command by itself. When its prompt appears, type the
+physical observation and press Enter. Do not paste later shell commands as the
+answer:
+
+```bash
+read -r -p 'Initial posture; buttons used; final posture; motion after damping; slip/impact/sound: ' GO1_RETURN_NOTE && printf '%s\n' "$GO1_RETURN_NOTE" > "$GO1_RETURN_DIR/observation.txt"
+```
+
+After the normal shell prompt returns, run:
+
+```bash
+cat "$GO1_RETURN_DIR/observation.txt"
 sha256sum "$GO1_RETURN_DIR/native-return.pcap"
 printf 'Copy this Pi archive path: %s\n' "$GO1_RETURN_DIR"
 ```
@@ -1577,6 +1641,116 @@ change depends on reviewing the endpoint and transition data.
 Keep both Pi and Ubuntu copies of this new observation until decoding and
 trajectory review are complete. No cleanup or repeat capture is requested at
 this stage. The earlier preflight and software-test archives remain accepted.
+
+### 2.1.9 Prone low-rise software gate — current step
+
+This is an **Ubuntu-only software test**. Leave the Go1 powered off or
+disconnected, do not SSH to the Pi, and do not start any factory/developer
+mode. Every executable invocation below includes `--dry-run`; the dedicated
+hardware-lock test also proves that omitting it is rejected before UDP setup
+or the `ARM` prompt.
+
+The new path starts from the passively measured prone fixture and implements:
+
+- one second and at least 500 fresh samples of position-free damping while the
+  pose is checked for quietness;
+- a four-second smooth engagement from `Kp=0` to at most `Kp=5`, with `Kd=1`,
+  zero feed-forward torque, and a per-joint predicted command-effort cap of
+  0.50 N m;
+- a one-second stable hold, followed by a four-second 5 mm symmetric trunk
+  rise generated by inverse kinematics and another one-second stable hold;
+- a four-second return to the captured/clamped engagement target;
+- one continuous second in which quiet feedback and an independent floor-
+  support observation overlap; missing or intermittent support latches an
+  impedance hold instead of releasing;
+- a four-second smooth `Kp=5` to `Kp=0` release and a final one-second damping
+  window.
+
+The observed calf feedback below the SDK command minimum is accepted only as
+feedback. Command positions remain within the existing SDK bounds. A single
+Ctrl-C during movement returns to the prone target before release; double
+Ctrl-C, L2+B, loss of the valid remote stop channel, feedback loss, watchdog
+expiry, excessive speed, tracking error, or envelope violation enters damping
+immediately. These are software design
+properties, not evidence that the motion is safe on the physical robot.
+
+**1. Synchronize and create a clean build on Ubuntu.** From the repository:
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+git pull --ff-only
+git submodule update --init --recursive
+conda activate dog_ctrl
+GO1_PRONE_BUILD=/tmp/go1-prone-low-rise-build
+cmake -S . -B "$GO1_PRONE_BUILD" \
+  -DBUILD_TESTING=ON -DBUILD_SDK_EXAMPLES=OFF
+```
+
+Stop and send the output if pull, submodule initialization, or configuration
+fails. A CMake deprecation warning is not a failure.
+
+**2. Build only the required software-test targets.**
+
+```bash
+cmake --build "$GO1_PRONE_BUILD" \
+  --target go1_prone_low_rise_test go1_lowlevel_experiment -j2
+```
+
+**3. Run the three-part software gate.**
+
+```bash
+ctest --test-dir "$GO1_PRONE_BUILD" \
+  -R '^go1_prone_low_rise_' -V
+GO1_PRONE_TEST_STATUS=$?
+printf 'prone_test_exit=%s\n' "$GO1_PRONE_TEST_STATUS"
+```
+
+Expected result: 3/3 tests pass and `prone_test_exit=0`. The core test should
+print these four checks:
+
+```text
+[PASS] bounded nominal sequence and exact 5 mm kinematics
+[PASS] independent continuous support interlock
+[PASS] cancel, feedback, watchdog, remote and envelope faults
+[PASS] hardware CLI rejected before UDP
+```
+
+The hardware-lock test is successful when the non-dry invocation fails. CTest
+knows that failure is expected; do not run that command manually and do not
+try to bypass the lock.
+
+**4. Produce and analyze one separately archived dry-run.**
+
+```bash
+mkdir -p logs/prone-low-rise-software
+GO1_PRONE_REVIEW=$(mktemp -d \
+  "$PWD/logs/prone-low-rise-software/review-XXXXXXXX")
+"$GO1_PRONE_BUILD/go1_lowlevel_experiment" \
+  --dry-run --mode prone-low-rise \
+  --log "$GO1_PRONE_REVIEW/prone_low_rise.csv"
+GO1_PRONE_RUN_STATUS=$?
+python3 experiment/analyze_lowlevel_log.py \
+  "$GO1_PRONE_REVIEW/prone_low_rise.csv" --no-plots
+GO1_PRONE_ANALYZE_STATUS=$?
+sha256sum "$GO1_PRONE_REVIEW/prone_low_rise.csv" \
+  "$GO1_PRONE_REVIEW/prone_low_rise.csv.summary.csv"
+printf 'dry_run_exit=%s analyze_exit=%s\nUbuntu archive: %s\n' \
+  "$GO1_PRONE_RUN_STATUS" "$GO1_PRONE_ANALYZE_STATUS" "$GO1_PRONE_REVIEW"
+```
+
+Expected dry-run indicators include 500 Hz feedback, 2 ms p99/maximum gaps,
+zero roll/pitch excursion, about 0.0655 rad/s maximum joint speed, valid remote
+and low-level ratios of 1.000, zero duplicate/gapped ticks, and zero watchdog
+cycles. `nan` for lift/contact support-margin metrics is expected because this
+mode does not use the standing foot-force support polygon. The synthetic plant
+and synthetic independent-support flag do not validate floor contact, real
+effort, network timing, or physical stability.
+
+**5. Stop and send the result.** Send the complete output from Steps 1–4,
+including both exit codes, hashes, and the Ubuntu archive path. Do not deploy
+to the Pi and do not perform a physical low-rise run. Hardware remains locked
+until these results are reviewed and a separate operator-observation mechanism
+for continuous floor support is designed.
 
 ### 2.2 Original Pi rehearsal — completed; reference only
 

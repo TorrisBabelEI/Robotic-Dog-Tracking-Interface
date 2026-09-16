@@ -42,6 +42,13 @@ ACTION_PHASES: Tuple[str, ...] = (
     "LOWER",
     "CONTACT_VERIFY",
     "RECENTER",
+    "PRONE_ENGAGE",
+    "PRONE_ENGAGE_HOLD",
+    "PRONE_RISE",
+    "PRONE_RISE_HOLD",
+    "PRONE_RETURN",
+    "PRONE_SETTLE",
+    "PRONE_RELEASE",
 )
 
 
@@ -213,6 +220,8 @@ def network_metrics(
     elapsed = float(host_s[-1] - host_s[0]) if host_s.size > 1 else math.nan
     gaps = np.diff(recv_times)
     hold_indices = np.flatnonzero(data["phase"] == "HOLD")
+    if not hold_indices.size:
+        hold_indices = np.flatnonzero(data["phase"] == "PRONE_OBSERVE")
     if hold_indices.size and np.any(action_mask):
         roll_reference = data["imu_roll"][hold_indices[0]]
         pitch_reference = data["imu_pitch"][hold_indices[0]]

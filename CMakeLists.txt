@@ -90,6 +90,17 @@ if(BUILD_TESTING)
   add_test(NAME go1_ground_exit_integration
     COMMAND go1_lowlevel_experiment --dry-run --mode ground-handover
       --dry-run-normal-exit --log ${CMAKE_BINARY_DIR}/go1_dry_normal_exit.csv)
+  add_executable(go1_prone_low_rise_test test/go1_prone_low_rise_test.cpp)
+  target_link_libraries(go1_prone_low_rise_test go1_kinematics)
+  add_test(NAME go1_prone_low_rise_core COMMAND go1_prone_low_rise_test)
+  add_test(NAME go1_prone_low_rise_integration
+    COMMAND go1_lowlevel_experiment --dry-run --mode prone-low-rise
+      --log ${CMAKE_BINARY_DIR}/go1_dry_prone_low_rise.csv)
+  add_test(NAME go1_prone_low_rise_hardware_lock
+    COMMAND go1_lowlevel_experiment --mode prone-low-rise --prone-confirmed
+      --log ${CMAKE_BINARY_DIR}/should_not_exist.csv)
+  set_tests_properties(go1_prone_low_rise_hardware_lock
+                       PROPERTIES WILL_FAIL TRUE)
   add_executable(go1_log_file_test test/go1_log_file_test.cpp)
   add_test(NAME go1_log_file_confirmation COMMAND go1_log_file_test)
   add_executable(go1_kinematics_test test/go1_kinematics_test.cpp)
