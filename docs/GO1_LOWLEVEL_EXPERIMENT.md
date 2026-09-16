@@ -7,18 +7,17 @@ do not count as hardware acceptance.
 | Chapter | Experiment | Current status |
 | --- | --- | --- |
 | [1](#chapter-1--remote-preflight) | Communication and remote preflight | Reported passing run: `remote_preflight_fix_02.csv` |
-| [2](#chapter-2--ground-handover) | Standing takeover and 10-second hold | Factory return accepted; prone low-rise software test next; hardware locked |
+| [2](#chapter-2--ground-handover) | Standing takeover and 10-second hold | Prone low-rise Ubuntu software gate passed; hardware locked pending real support input |
 | [3](#chapter-3--squat-and-return) | Four-leg half-squat and return | Original dry-run completed and archived; hardware pending Chapter 2 |
 | [4](#chapter-4--single-leg-lift) | Weight transfer and one leg lift | Original dry-run completed and archived; hardware pending Chapter 3 |
 | [5](#chapter-5--four-leg-sequence) | Four sequential leg lifts | Original dry-run completed and archived; hardware pending Chapter 4 |
 
-**Current next step: run the Ubuntu-only software gate in 2.1.9; do not connect
-to the Pi or repeat robot motion.** Go directly to
-[2.1.9](#219-prone-low-rise-software-gate--current-step).
-The factory return capture and the remembered physical observation are now
-accepted. The new `prone-low-rise` state machine remains dry-run-only and its
-hardware CLI is deliberately locked before UDP initialization or the `ARM`
-prompt.
+**Current next step: test the Ubuntu-only hold-to-confirm prototype; do not
+connect to the Pi or repeat robot motion.** See
+[2.1.10](#2110-ubuntu-operator-support-input--software-prototype). The factory
+return observation and the Ubuntu `prone-low-rise` software gate are accepted.
+The new state machine remains dry-run-only and its hardware CLI is deliberately
+locked before UDP initialization or the `ARM` prompt.
 
 The operator confirmed no support equipment and requested continued development
 without external lifting. Section 2.1.6 is closed; lack of a rig is not a
@@ -1642,7 +1641,30 @@ Keep both Pi and Ubuntu copies of this new observation until decoding and
 trajectory review are complete. No cleanup or repeat capture is requested at
 this stage. The earlier preflight and software-test archives remain accepted.
 
-### 2.1.9 Prone low-rise software gate — current step
+### 2.1.9 Prone low-rise software gate — passed on Ubuntu; reference only
+
+**Accepted operator result.** Ubuntu GNU 9.4.0 built both requested targets.
+The dedicated CTest run passed all 3/3 tests with `prone_test_exit=0`:
+core state-machine checks, a 11,255-sample integration dry-run, and the
+expected hardware-lock rejection (`no UDP opened`). The separately archived
+dry-run and offline analyzer both exited 0. The report showed 500.00 Hz,
+2.000 ms p99/maximum gap, 0.0000 rad roll/pitch excursion, 0.0655 rad/s
+maximum joint speed, 30 degrees C maximum temperature, valid remote and
+low-level ratios of 1.000, zero duplicate/gapped ticks, and zero watchdog
+cycles. The lift/contact support metrics were `nan` as expected for this mode.
+
+Retain both files in the Ubuntu archive; neither needs to be copied to the Pi:
+
+```text
+/home/aims/Yuxuan/Robotic-Dog-Tracking-Interface/logs/prone-low-rise-software/review-nwpAsaCt/
+prone_low_rise.csv SHA-256: 0a231979a1076ad88a8d8fb17bd8480a384b62d9bc3f47b9357b3e09f075c309
+prone_low_rise.csv.summary.csv SHA-256: b89f065f927b38d8ba21d61568dc58b0b434984defce68fdbb3e1e2a33e9184d
+```
+
+This acceptance is based on the supplied terminal transcript; the archived
+CSV files were not independently downloaded to this development computer.
+The commands below are retained for reproducibility and are not a request to
+repeat the passed run.
 
 This is an **Ubuntu-only software test**. Leave the Go1 powered off or
 disconnected, do not SSH to the Pi, and do not start any factory/developer
@@ -1746,11 +1768,83 @@ mode does not use the standing foot-force support polygon. The synthetic plant
 and synthetic independent-support flag do not validate floor contact, real
 effort, network timing, or physical stability.
 
-**5. Stop and send the result.** Send the complete output from Steps 1–4,
-including both exit codes, hashes, and the Ubuntu archive path. Do not deploy
-to the Pi and do not perform a physical low-rise run. Hardware remains locked
-until these results are reviewed and a separate operator-observation mechanism
-for continuous floor support is designed.
+**5. Stop after the result.** The reported run passed; do not repeat it solely
+to proceed. Do not deploy to the Pi and do not perform a physical low-rise
+run. Hardware remains locked until a separate operator-observation mechanism
+for continuous floor support is designed and validated.
+
+### 2.1.10 Ubuntu operator-support input — software prototype
+
+The simulation supplies `floorSupportObserved` independently, but the hardware
+control loop does not supply it. On a physical run the argument therefore
+remains false: after returning, the controller would time out into a latched
+impedance hold, and the gradual release would never be authorized. This is an
+intentional interlock, not a hardware-ready path. Joint positions, foot forces,
+and IMU quietness do not independently prove that the trunk is on the floor.
+
+The operator confirmed that one person can watch the Go1 and operate the
+Ubuntu laptop. The independent input can therefore be a visible, hold-to-
+confirm button on that laptop. It is *not* a contact sensor: the operator must
+actually see the trunk fully resting on the floor. It does not replace the
+factory remote or its L2+B emergency chord.
+
+An offline prototype is in `experiment/operator_support_gate.py`. Its sender
+and receiver both use `127.0.0.1` on the same Ubuntu computer; they cannot
+reach the Pi. The receiver accepts only a current hold heartbeat, rejects
+out-of-order/malformed frames, and revokes confirmation on release, disconnect,
+window focus loss, or a gap longer than 100 ms. A separate automated test
+exercises the lease rules. **This prototype is not connected to the C++
+controller, does not send motor commands, and does not authorize a physical
+test.** Transport to the Pi, input authentication/freshness across machines,
+and the exact behavior of a real latched hold still require separate review.
+
+**1. On Ubuntu, run the logic tests and check the GUI dependency.** The robot
+may remain powered off. Use a graphical Ubuntu desktop session, not an SSH
+terminal on the Pi:
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+git pull --ff-only
+conda activate dog_ctrl
+python3 -m unittest discover -s test -p test_operator_support_gate.py -v
+python3 -c 'import tkinter; print("tkinter=available")'
+```
+
+Expected: four tests pass and `tkinter=available`. If Tkinter is unavailable,
+stop and send that error; do not install packages or improvise an input tool.
+
+**2. In Ubuntu terminal 1, start only the offline receiver probe.**
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+conda activate dog_ctrl
+python3 -u experiment/operator_support_gate.py probe
+```
+
+It should print `Offline probe listening on 127.0.0.1:18092; no robot access`.
+If that port is busy, stop and send the error; do not kill an unknown process.
+
+**3. In a separate Ubuntu terminal 2, open the local GUI.**
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+conda activate dog_ctrl
+python3 experiment/operator_support_gate.py sender
+```
+
+Press and hold the on-screen button for about two seconds, then release it.
+The probe should show `support=true` while held and `support=false` after
+release. Repeat once, then hold and move the pointer out of the button or
+switch away from the window; confirmation should drop. Close the GUI; the
+probe should print `Sender disconnected; support=false`. Stop the probe with
+Ctrl-C. This test uses no Go1 connection and no robot motion.
+
+**4. Send the result.** Send the four test lines, any Tkinter error, terminal 1
+probe transitions, and whether the button was comfortable to hold while
+watching the robot's usual location. Do not deploy the prototype to the Pi or
+remove the C++ hardware lock. The next review will decide whether a single-
+operator laptop confirmation can be integrated without compromising the
+existing L2+B stop path and fail-closed behavior.
 
 ### 2.2 Original Pi rehearsal — completed; reference only
 
