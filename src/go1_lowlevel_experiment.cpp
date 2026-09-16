@@ -583,9 +583,17 @@ public:
       }
       const bool settled = proneTargetSettled(
           feedback, proneEngagementQ_, recvFresh, recvAlive);
-      if (!floorSupportObserved) proneSupportStableStartNs_ = 0;
+      // A confirmation that started before PRONE_SETTLE may be stale by the
+      // time the trunk reaches the floor. Require a false observation in this
+      // phase before accepting a new assertion, not merely a still-true flag.
+      if (!floorSupportObserved) {
+        proneSupportStableStartNs_ = 0;
+        proneSupportReadyForNewAssert_ = true;
+      }
+      const bool supportEligible =
+          proneSupportReadyForNewAssert_ && floorSupportObserved;
       if (recvFresh) {
-        if (!settled || !floorSupportObserved)
+        if (!settled || !supportEligible)
           proneSupportStableStartNs_ = 0;
         else if (proneSupportStableStartNs_ == 0)
           proneSupportStableStartNs_ = hostNs;
@@ -593,7 +601,7 @@ public:
       const double supportedS = proneSupportStableStartNs_ > 0
           ? (hostNs - proneSupportStableStartNs_) / 1.0e9 : 0.0;
       exitStableS_ = supportedS;
-      if (settled && floorSupportObserved && supportedS >= kProneHoldS) {
+      if (settled && supportEligible && supportedS >= kProneHoldS) {
         exitSupportConfirmed_ = true;
         transition(Phase::ProneRelease);
       } else if (phaseElapsedS_ >= kProneSupportTimeoutS) {
@@ -1543,6 +1551,7 @@ private:
       proneStableS_ = 0.0;
     if (next == Phase::ProneSettle) {
       proneSupportStableStartNs_ = 0;
+      proneSupportReadyForNewAssert_ = false;
       exitStableS_ = 0.0;
     }
     if (next == Phase::SafeHold) safeHoldReached_.store(true);
@@ -1570,6 +1579,7 @@ private:
   std::array<float, kJointCount> proneReturnStartQ_{{0}};
   int proneObserveCount_ = 0;
   int64_t proneObserveFirstNs_ = 0, proneSupportStableStartNs_ = 0;
+  bool proneSupportReadyForNewAssert_ = false;
   double proneStableS_ = 0.0;
   int64_t groundEntryStartNs_ = 0;
   std::array<float, kJointCount> exitStartQ_{{0}}, exitHoldQ_{{0}};

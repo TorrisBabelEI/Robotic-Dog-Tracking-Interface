@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline-only prototype of a hold-to-confirm operator support signal.
+"""Offline-only prototype of a time-limited operator support confirmation.
 
 Both sides bind/connect to 127.0.0.1. This program never imports the Go1 SDK,
 opens a robot socket, or changes the C++ controller's hardware lock. A later
@@ -18,7 +18,32 @@ from dataclasses import dataclass
 
 LEASE_S = 0.10
 SEND_INTERVAL_MS = 25
+PULSE_S = 1.50
 MAX_FRAME = 32
+
+
+@dataclass
+class ConfirmationPulse:
+    """A single click grants one short, non-extendable confirmation window."""
+
+    deadline_s: float | None = None
+
+    def start(self, now_s: float) -> bool:
+        if self.active(now_s):
+            return False
+        self.deadline_s = now_s + PULSE_S
+        return True
+
+    def active(self, now_s: float) -> bool:
+        if self.deadline_s is None:
+            return False
+        if now_s < self.deadline_s:
+            return True
+        self.deadline_s = None
+        return False
+
+    def cancel(self) -> None:
+        self.deadline_s = None
 
 
 @dataclass
@@ -76,7 +101,8 @@ def run_probe(port: int) -> int:
         listener.listen(1)
         listener.setblocking(False)
         print(f"Offline probe listening on 127.0.0.1:{port}; no robot access")
-        print("Hold the GUI button, then release it; press Ctrl-C to close.")
+        print("Click the GUI once; its 1.5-second confirmation expires automatically.")
+        print("Press Ctrl-C to close the offline probe.")
         connection: socket.socket | None = None
         pending = bytearray()
         previous = False
@@ -144,50 +170,51 @@ def run_sender(port: int) -> int:
     root.title("Offline prone-support input test")
     root.geometry("520x240")
     sequence = 0
-    pressed = False
+    pulse = ConfirmationPulse()
 
     label = tk.Label(root, text="NOT CONFIRMED", font=("Sans", 18), fg="red")
     label.pack(pady=25)
-    button = tk.Button(root, text="Hold only while belly is visibly on floor",
+    button = tk.Button(root, text="Click once after visually confirming belly contact",
                        font=("Sans", 13), width=42, height=3)
     button.pack()
 
     def send(command: str) -> None:
-        nonlocal sequence, pressed
+        nonlocal sequence
         sequence += 1
         try:
             connection.sendall(f"{command} {sequence}\n".encode("ascii"))
         except OSError:
-            pressed = False
+            pulse.cancel()
             label.configure(text="CONNECTION LOST", fg="red")
+            button.configure(state="disabled")
 
-    def press(_event: object) -> None:
-        nonlocal pressed
-        pressed = True
-        label.configure(text="HOLDING CONFIRMATION", fg="green")
-        send("H")
+    def confirm() -> None:
+        if pulse.start(time.monotonic()):
+            label.configure(text="CONFIRMING FOR 1.5 SECONDS", fg="green")
+            send("H")
 
-    def release(_event: object = None) -> None:
-        nonlocal pressed
-        if pressed:
-            pressed = False
+    def cancel(_event: object = None) -> None:
+        if pulse.deadline_s is not None:
+            pulse.cancel()
             label.configure(text="NOT CONFIRMED", fg="red")
             send("R")
 
     def heartbeat() -> None:
-        if pressed:
+        pending = pulse.deadline_s is not None
+        if pulse.active(time.monotonic()):
             send("H")
+        elif pending:
+            label.configure(text="NOT CONFIRMED", fg="red")
+            send("R")
         root.after(SEND_INTERVAL_MS, heartbeat)
 
     def close() -> None:
-        release()
+        cancel()
         connection.close()
         root.destroy()
 
-    button.bind("<ButtonPress-1>", press)
-    button.bind("<ButtonRelease-1>", release)
-    button.bind("<Leave>", release)
-    root.bind("<FocusOut>", release)
+    button.configure(command=confirm)
+    root.bind("<FocusOut>", cancel)
     root.protocol("WM_DELETE_WINDOW", close)
     heartbeat()
     try:

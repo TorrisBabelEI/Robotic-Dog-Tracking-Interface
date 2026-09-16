@@ -1,6 +1,28 @@
 import unittest
 
-from experiment.operator_support_gate import LEASE_S, SupportLease
+from experiment.operator_support_gate import (
+    LEASE_S,
+    PULSE_S,
+    ConfirmationPulse,
+    SupportLease,
+)
+
+
+class ConfirmationPulseTests(unittest.TestCase):
+    def test_single_click_expires_without_being_held(self):
+        pulse = ConfirmationPulse()
+        self.assertTrue(pulse.start(10.0))
+        self.assertTrue(pulse.active(10.0 + PULSE_S - 0.001))
+        self.assertFalse(pulse.active(10.0 + PULSE_S))
+
+    def test_repeat_click_cannot_extend_active_pulse(self):
+        pulse = ConfirmationPulse()
+        self.assertTrue(pulse.start(10.0))
+        self.assertFalse(pulse.start(10.5))
+        self.assertFalse(pulse.active(10.0 + PULSE_S))
+        self.assertTrue(pulse.start(12.0))
+        pulse.cancel()
+        self.assertFalse(pulse.active(12.1))
 
 
 class SupportLeaseTests(unittest.TestCase):

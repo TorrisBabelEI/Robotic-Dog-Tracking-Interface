@@ -12,8 +12,9 @@ do not count as hardware acceptance.
 | [4](#chapter-4--single-leg-lift) | Weight transfer and one leg lift | Original dry-run completed and archived; hardware pending Chapter 3 |
 | [5](#chapter-5--four-leg-sequence) | Four sequential leg lifts | Original dry-run completed and archived; hardware pending Chapter 4 |
 
-**Current next step: test the Ubuntu-only hold-to-confirm prototype; do not
-connect to the Pi or repeat robot motion.** See
+**Current next step: complete the one-click operator-input design offline; no
+new operator test is requested yet.** Do not connect to the Pi or repeat robot
+motion. See
 [2.1.10](#2110-ubuntu-operator-support-input--software-prototype). The factory
 return observation and the Ubuntu `prone-low-rise` software gate are accepted.
 The new state machine remains dry-run-only and its hardware CLI is deliberately
@@ -1775,6 +1776,17 @@ for continuous floor support is designed and validated.
 
 ### 2.1.10 Ubuntu operator-support input — software prototype
 
+**Hold-button prototype evaluated on Ubuntu.** The unit tests passed 4/4 and
+`tkinter=available`. With the local receiver listening on `127.0.0.1:18092`,
+the operator held the button for more than two seconds and released it, then
+held it again and moved the pointer outside the window. The receiver reported
+`support=true`, `support=false` for each action. This validates the two
+observed release paths on that Ubuntu laptop. The operator then confirmed that
+closing the GUI produced the expected disconnect warning. These tests need no
+repetition. The operator also pointed out that continuously holding the screen
+button while keeping the L2+B remote ready occupies both hands. The continuous
+hold interaction is therefore rejected for the one-person test.
+
 The simulation supplies `floorSupportObserved` independently, but the hardware
 control loop does not supply it. On a physical run the argument therefore
 remains false: after returning, the controller would time out into a latched
@@ -1783,17 +1795,20 @@ intentional interlock, not a hardware-ready path. Joint positions, foot forces,
 and IMU quietness do not independently prove that the trunk is on the floor.
 
 The operator confirmed that one person can watch the Go1 and operate the
-Ubuntu laptop. The independent input can therefore be a visible, hold-to-
-confirm button on that laptop. It is *not* a contact sensor: the operator must
-actually see the trunk fully resting on the floor. It does not replace the
-factory remote or its L2+B emergency chord.
+Ubuntu laptop. The revised independent input is a **single click after visual
+confirmation** of trunk contact, issuing a non-extendable 1.5-second pulse of
+100-ms-leased heartbeats. It does not need the operator's hand throughout the
+release. It is *not* a contact sensor, and it does not replace the factory
+remote or its L2+B emergency chord. A click before the controller's return is
+complete must not count toward support verification; the later cross-machine
+integration must enforce that phase-specific condition.
 
 An offline prototype is in `experiment/operator_support_gate.py`. Its sender
 and receiver both use `127.0.0.1` on the same Ubuntu computer; they cannot
-reach the Pi. The receiver accepts only a current hold heartbeat, rejects
-out-of-order/malformed frames, and revokes confirmation on release, disconnect,
-window focus loss, or a gap longer than 100 ms. A separate automated test
-exercises the lease rules. **This prototype is not connected to the C++
+reach the Pi. The receiver accepts only current pulse heartbeats, rejects
+out-of-order/malformed frames, and revokes confirmation on pulse expiry,
+disconnect, window focus loss, or a gap longer than 100 ms. Automated tests
+exercise both the short pulse and lease rules. **This prototype is not connected to the C++
 controller, does not send motor commands, and does not authorize a physical
 test.** Transport to the Pi, input authentication/freshness across machines,
 and the exact behavior of a real latched hold still require separate review.
@@ -1810,7 +1825,7 @@ python3 -m unittest discover -s test -p test_operator_support_gate.py -v
 python3 -c 'import tkinter; print("tkinter=available")'
 ```
 
-Expected: four tests pass and `tkinter=available`. If Tkinter is unavailable,
+Expected for the revised version: six tests pass and `tkinter=available`. If Tkinter is unavailable,
 stop and send that error; do not install packages or improvise an input tool.
 
 **2. In Ubuntu terminal 1, start only the offline receiver probe.**
@@ -1832,19 +1847,23 @@ conda activate dog_ctrl
 python3 experiment/operator_support_gate.py sender
 ```
 
-Press and hold the on-screen button for about two seconds, then release it.
-The probe should show `support=true` while held and `support=false` after
-release. Repeat once, then hold and move the pointer out of the button or
-switch away from the window; confirmation should drop. Close the GUI; the
-probe should print `Sender disconnected; support=false`. Stop the probe with
-Ctrl-C. This test uses no Go1 connection and no robot motion.
+Click the on-screen button once after an imagined visual contact confirmation.
+The probe should show `support=true`, then automatically `support=false` after
+about 1.5 seconds without holding the button. Switching away from the GUI
+while the pulse is active cancels it. Closing the GUI should print
+`Sender disconnected; support=false`. Stop the probe with Ctrl-C. This test
+uses no Go1 connection and no robot motion. **The operator is not being asked
+to repeat this GUI test now; these steps document the revised prototype for a
+later consolidated software check.**
 
-**4. Send the result.** Send the four test lines, any Tkinter error, terminal 1
-probe transitions, and whether the button was comfortable to hold while
-watching the robot's usual location. Do not deploy the prototype to the Pi or
-remove the C++ hardware lock. The next review will decide whether a single-
-operator laptop confirmation can be integrated without compromising the
-existing L2+B stop path and fail-closed behavior.
+**4. No further manual micro-test is needed at this point.** The next software
+work will combine cross-machine transport, phase-specific acceptance, stale/
+disconnect behavior, and latched-hold recovery into one offline review. Only
+after that review will an end-to-end test be requested. Do not deploy the
+prototype to the Pi or remove the C++ hardware lock. Low gain and a predicted
+0.50 N m per-joint limit are not proof of zero contact force or physical safety:
+the factory capture showed substantial post-damping settling, and the first
+custom physical motion still needs a separate controlled acceptance plan.
 
 ### 2.2 Original Pi rehearsal — completed; reference only
 

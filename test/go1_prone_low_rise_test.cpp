@@ -151,6 +151,15 @@ void nominal() {
 }
 
 void supportInterlock() {
+  Fixture premature;
+  // A confirmation already asserted during the return is not a fresh
+  // operator observation of the final prone contact.
+  while (premature.core.phase() != Phase::ProneSettle)
+    premature.tick(true);
+  for (int i = 0; i < 2600; ++i) premature.tick(true);
+  require(premature.core.phase() == Phase::ProneSupportHold,
+          "pre-settle confirmation must not authorize gradual release");
+
   Fixture missing;
   missing.reach(Phase::ProneSettle);
   for (int i = 0; i < 2600; ++i) missing.tick(false);
