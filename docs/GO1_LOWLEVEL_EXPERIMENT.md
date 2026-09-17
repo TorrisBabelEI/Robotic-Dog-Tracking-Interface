@@ -12,13 +12,15 @@ do not count as hardware acceptance.
 | [4](#chapter-4--single-leg-lift) | Weight transfer and one leg lift | Original dry-run completed and archived; hardware pending Chapter 3 |
 | [5](#chapter-5--four-leg-sequence) | Four sequential leg lifts | Original dry-run completed and archived; hardware pending Chapter 4 |
 
-**Current next step: complete the one-click operator-input design offline; no
-new operator test is requested yet.** Do not connect to the Pi or repeat robot
-motion. See
-[2.1.10](#2110-ubuntu-operator-support-input--software-prototype). The factory
-return observation and the Ubuntu `prone-low-rise` software gate are accepted.
-The new state machine remains dry-run-only and its hardware CLI is deliberately
-locked before UDP initialization or the `ARM` prompt.
+**Current test cluster:** complete the software/Ubuntu-to-Pi confirmation
+channel in [2.1.11](#2111-consolidated-operator-input-transport-test--robot-off)
+as one session with the robot off. The earlier `remote-preflight` run already
+established that the computer/Pi sent low-level damping commands and received
+Go1 feedback; do not repeat it merely to prove computer control. The next new
+physical objective is one small prone movement, but its hardware CLI remains
+locked before UDP initialization or the `ARM` prompt. Passing the transport
+cluster alone does not unlock that movement. The goal-based sequence and its
+stopping points are in [2.1.13](#2113-goal-based-test-clusters).
 
 The operator confirmed no support equipment and requested continued development
 without external lifting. Section 2.1.6 is closed; lack of a rig is not a
@@ -1787,12 +1789,12 @@ repetition. The operator also pointed out that continuously holding the screen
 button while keeping the L2+B remote ready occupies both hands. The continuous
 hold interaction is therefore rejected for the one-person test.
 
-The simulation supplies `floorSupportObserved` independently, but the hardware
-control loop does not supply it. On a physical run the argument therefore
-remains false: after returning, the controller would time out into a latched
-impedance hold, and the gradual release would never be authorized. This is an
-intentional interlock, not a hardware-ready path. Joint positions, foot forces,
-and IMU quietness do not independently prove that the trunk is on the floor.
+The first simulation supplied `floorSupportObserved` independently. The new
+hardware-code path now reads a separate loopback-only TCP receiver, but the
+`prone-low-rise` hardware CLI remains locked before constructing the SDK/UDP
+runner. Thus this code is prepared for an offline transport test, **not** a
+hardware-ready path. Joint positions, foot forces, and IMU quietness do not
+independently prove that the trunk is on the floor.
 
 The operator confirmed that one person can watch the Go1 and operate the
 Ubuntu laptop. The revised independent input is a **single click after visual
@@ -1800,18 +1802,21 @@ confirmation** of trunk contact, issuing a non-extendable 1.5-second pulse of
 100-ms-leased heartbeats. It does not need the operator's hand throughout the
 release. It is *not* a contact sensor, and it does not replace the factory
 remote or its L2+B emergency chord. A click before the controller's return is
-complete must not count toward support verification; the later cross-machine
-integration must enforce that phase-specific condition.
+complete does not count toward support verification: the C++ state machine
+requires an unconfirmed observation within `PRONE_SETTLE` before a new
+assertion can begin the one-second dwell.
 
-An offline prototype is in `experiment/operator_support_gate.py`. Its sender
-and receiver both use `127.0.0.1` on the same Ubuntu computer; they cannot
-reach the Pi. The receiver accepts only current pulse heartbeats, rejects
+An offline prototype is in `experiment/operator_support_gate.py`. The Ubuntu
+sender connects only to `127.0.0.1`; an SSH local-forward can deliver that
+stream to the Pi's new C++ receiver, which also binds only `127.0.0.1`. The
+receiver accepts only current pulse heartbeats, rejects
 out-of-order/malformed frames, and revokes confirmation on pulse expiry,
 disconnect, window focus loss, or a gap longer than 100 ms. Automated tests
-exercise both the short pulse and lease rules. **This prototype is not connected to the C++
-controller, does not send motor commands, and does not authorize a physical
-test.** Transport to the Pi, input authentication/freshness across machines,
-and the exact behavior of a real latched hold still require separate review.
+exercise both the short pulse and lease rules. The separate C++ probe does not
+link the Go1 SDK or send motor commands. The hardware CLI lock remains active.
+SSH authenticates the tunnel endpoint, but a localhost TCP stream is not a
+physical contact sensor or a hard real-time safety channel; delayed/buffered
+transport and latched-hold recovery remain physical-test review items.
 
 **1. On Ubuntu, run the logic tests and check the GUI dependency.** The robot
 may remain powered off. Use a graphical Ubuntu desktop session, not an SSH
@@ -1856,14 +1861,165 @@ uses no Go1 connection and no robot motion. **The operator is not being asked
 to repeat this GUI test now; these steps document the revised prototype for a
 later consolidated software check.**
 
-**4. No further manual micro-test is needed at this point.** The next software
-work will combine cross-machine transport, phase-specific acceptance, stale/
-disconnect behavior, and latched-hold recovery into one offline review. Only
-after that review will an end-to-end test be requested. Do not deploy the
-prototype to the Pi or remove the C++ hardware lock. Low gain and a predicted
+**4. No further manual micro-test is needed in this section.** Continue to
+the consolidated transport test in 2.1.11. Do not remove the C++ hardware
+lock. Low gain and a predicted
 0.50 N m per-joint limit are not proof of zero contact force or physical safety:
 the factory capture showed substantial post-damping settling, and the first
 custom physical motion still needs a separate controlled acceptance plan.
+
+### 2.1.11 Consolidated operator-input transport test — robot off
+
+This entire section is **software and networking only**. The Go1 must be
+powered off, with no active custom motor controller. Connecting the Ubuntu
+laptop to the Pi over SSH for this test is allowed; do not start
+`go1_lowlevel_experiment`, enter developer mode, or press any factory motion
+buttons. The Pi program below is `go1_operator_support_probe`, which does not
+link the Unitree SDK or open robot UDP sockets.
+
+**1. On Ubuntu, synchronize and run the entire robot-off software cluster.**
+Check status first:
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+git status --short
+```
+
+If it shows anything, preserve those changes and stop before pulling.
+Otherwise run the cluster in the same Ubuntu terminal:
+
+```bash
+git pull --ff-only
+conda activate dog_ctrl
+bash experiment/run_go1_support_cluster.sh
+```
+
+The script stops at its first failure. Expected: six Python pulse/lease tests, four cleanup
+guard tests, Tkinter available, five CTest cases including the expected-failure
+hardware lock, and `support_cluster=PASS`.
+
+**2. Copy only the offline probe's build inputs from Ubuntu to Pi.** This is
+source transfer, not a controller launch. Keep the robot powered off.
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+ssh pi@192.168.12.1 'mkdir -p ~/Robotic-Dog-Tracking-Interface'
+rsync -avR \
+  ./CMakeLists.txt \
+  ./src/go1_lowlevel_experiment.cpp \
+  ./src/go1_kinematics.cpp \
+  ./src/go1_kinematics.hpp \
+  ./src/go1_log_file.hpp \
+  ./src/go1_operator_support.hpp \
+  ./src/go1_operator_support_probe.cpp \
+  ./externals/unitree_legged_sdk/include/ \
+  ./externals/unitree_legged_sdk/lib/cpp/arm64/ \
+  pi@192.168.12.1:~/Robotic-Dog-Tracking-Interface/
+ssh pi@192.168.12.1 \
+  'cd ~/Robotic-Dog-Tracking-Interface && \
+   cmake -S . -B build-support-probe -DBUILD_TESTING=OFF -DBUILD_SDK_EXAMPLES=OFF && \
+   cmake --build build-support-probe --target go1_operator_support_probe -j2'
+```
+
+The probe build is isolated in `build-support-probe`; it does not replace the
+older `build-arm64` controller. If Pi storage is tight or the build fails,
+stop and send the output rather than deleting another file.
+
+**3. Start the Pi probe and SSH tunnel in separate Ubuntu terminals.** In
+terminal A, leave this command running:
+
+```bash
+ssh pi@192.168.12.1 \
+  'cd ~/Robotic-Dog-Tracking-Interface && \
+   ./build-support-probe/go1_operator_support_probe'
+```
+
+It should say `C++ offline support probe listening on 127.0.0.1:18092; no Go1
+SDK or motor commands`. In terminal B, leave the tunnel running:
+
+```bash
+ssh -N -o ExitOnForwardFailure=yes \
+  -L 127.0.0.1:18092:127.0.0.1:18092 pi@192.168.12.1
+```
+
+This exposes port 18092 only on Ubuntu loopback and forwards to Pi loopback.
+Do not use `-g` or bind `0.0.0.0`. If the local port is already occupied by
+the earlier Python probe, close only that known probe; otherwise stop and
+inspect the owner rather than killing an unknown process.
+
+**4. Test one click from Ubuntu, then close the transport.** In terminal C:
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+conda activate dog_ctrl
+python3 experiment/operator_support_gate.py sender
+```
+
+Click once. Terminal A should show `support=true`, then `support=false`
+automatically after about 1.5 seconds without continuing to hold the button.
+Close the GUI, stop terminal B's tunnel with Ctrl-C, then stop terminal A's
+probe with Ctrl-C. Do not run the controller. This is one combined end-to-end
+check, not a series of separate robot trials.
+
+**5. Close the cluster.** If all of the above passed, record
+`support_cluster=PASS` and the Pi probe's `support=true` then `support=false`
+output together. There is no need to ask for the next micro-step: continue to
+the goal-based sequence in 2.1.13. If anything fails, stop at that step and
+send the error; do not retry by opening robot UDP ports. No hardware movement
+is authorized by the transport results.
+
+### 2.1.12 Verified-file cleanup — use only after archiving
+
+The support probe and SSH tunnel above create no Pi log file, so there is
+nothing to delete after 2.1.11. Retain the Ubuntu dry-run archive from 2.1.9.
+For a future Pi-generated log that has already been copied to this Ubuntu
+repository's `logs/` directory, use
+`experiment/cleanup_verified_go1_file.py` with the **exact** Pi file and
+Ubuntu archived copy. The tool rejects broad or escaped Pi paths, checks that
+both files are regular (not symlinks), compares SHA-256, and defaults to a
+read-only preview. It deletes only the selected Pi original on `--execute`,
+after rechecking its hash on the Pi; the Ubuntu archive remains untouched.
+
+First inspect the specific filenames and run without `--execute`:
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+python3 experiment/cleanup_verified_go1_file.py \
+  --pi-file '/home/pi/Robotic-Dog-Tracking-Interface/logs/EXACT_FILE' \
+  --ubuntu-copy "$PWD/logs/EXACT_ARCHIVE/EXACT_FILE"
+```
+
+Only after the preview prints the expected exact pathname and matching hash,
+repeat the same command with `--execute` appended. Replace the uppercase
+placeholders with the actual known single-file paths from that later run; do
+not pass a directory or wildcard. If either file is missing, has changed, or
+does not match, the script stops and deletes nothing. Do not use this tool to
+erase the only copy of a capture or a file you have not inspected.
+
+### 2.1.13 Goal-based test clusters
+
+Use one result per **objective**, not one conversation per button or unit test.
+The operator may run every step within a currently open cluster in one session;
+only stop on a failed check, unexpected motion/sound, loss of the known stop
+channel, or the explicit hardware lock below.
+
+| Cluster | Objective and existing evidence | Completion / next action |
+| --- | --- | --- |
+| A — computer-to-Go1 command and feedback | Already completed by the archived `remote_preflight_fix_02.csv` run: the Pi-origin low-level damping stream and Go1 feedback were observed. This is **real computer control**, but not a movement test. | Accepted. Do not repeat solely to prove the link. |
+| B — independent operator confirmation, Ubuntu to Pi | Run all of 2.1.11 with the robot off: one software script, one Pi probe, one SSH tunnel, one click. | `support_cluster=PASS` and Pi `support=true` followed by automatic `support=false`. Then stop the probe/tunnel. No separate report is needed if it passes. |
+| C — first simple motion | One 5-mm *nominal* prone body rise, return to the floor, then damping, using the single-click confirmation only after visible floor contact. This is the next **new** physical objective, not a standing or walking test. | **Not executable yet.** The `prone-low-rise` CLI lock must remain until the physical stop/recovery path and command-effort behavior are reviewed against real hardware. A successful B does not itself satisfy that review. No command in this manual bypasses the lock. |
+| D — repeatability and larger actions | Only after one C run is archived and its measured motion, feedback, faults, and final damping are accepted, consider a small number of identical prone repetitions. Standing hold, squat, and leg lift remain later, separate objectives. | Do not batch them into the first physical movement session or infer safety from a predicted torque limit. |
+
+The one-person interface for C is a single mouse click, not a continuous
+button hold: it leaves a hand free for the factory remote. Keep L2+B as the
+known remote damping/stop action, not as the routine confirmation input. The
+operator's earlier observation that the robot lay still after factory damping
+supports the chosen prone starting pose, but does not establish that a new
+low-level position command will exert negligible force. The present software
+limits the *predicted* joint effort; it has not measured or bounded the actual
+floor contact force, and a missing confirmation currently latches a position
+hold. Those are the specific reasons C remains locked, rather than a demand
+for more tiny UI checks.
 
 ### 2.2 Original Pi rehearsal — completed; reference only
 

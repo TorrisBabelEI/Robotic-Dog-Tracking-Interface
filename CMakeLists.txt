@@ -65,6 +65,8 @@ target_include_directories(go1_kinematics PUBLIC ${PROJECT_SOURCE_DIR}/src)
 
 add_executable(go1_lowlevel_experiment src/go1_lowlevel_experiment.cpp)
 target_link_libraries(go1_lowlevel_experiment go1_kinematics)
+add_executable(go1_operator_support_probe src/go1_operator_support_probe.cpp)
+target_link_libraries(go1_operator_support_probe -pthread)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(go1_lowlevel_experiment PRIVATE GO1_WITH_SDK=1)
   target_link_libraries(go1_lowlevel_experiment ${EXTRA_LIBS})
@@ -92,6 +94,14 @@ if(BUILD_TESTING)
       --dry-run-normal-exit --log ${CMAKE_BINARY_DIR}/go1_dry_normal_exit.csv)
   add_executable(go1_prone_low_rise_test test/go1_prone_low_rise_test.cpp)
   target_link_libraries(go1_prone_low_rise_test go1_kinematics)
+  add_executable(go1_operator_support_test test/go1_operator_support_test.cpp)
+  target_link_libraries(go1_operator_support_test -pthread)
+  add_test(NAME go1_operator_support_protocol COMMAND go1_operator_support_test)
+  add_executable(go1_operator_support_server_test
+    test/go1_operator_support_server_test.cpp)
+  target_link_libraries(go1_operator_support_server_test -pthread)
+  add_test(NAME go1_operator_support_loopback
+    COMMAND go1_operator_support_server_test)
   add_test(NAME go1_prone_low_rise_core COMMAND go1_prone_low_rise_test)
   add_test(NAME go1_prone_low_rise_integration
     COMMAND go1_lowlevel_experiment --dry-run --mode prone-low-rise

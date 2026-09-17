@@ -25,6 +25,7 @@
 #include <vector>
 
 #if defined(GO1_WITH_SDK)
+#include "go1_operator_support.hpp"
 #include "unitree_legged_sdk/joystick.h"
 #include "unitree_legged_sdk/unitree_legged_sdk.h"
 #include <boost/bind/bind.hpp>
@@ -1850,6 +1851,15 @@ public:
       lastCommandPublishNs_.store(steadyNowNs());
     }
 
+    if (isProneLowRiseMode(options_.mode)) {
+      std::string supportError;
+      if (!supportServer_.start(go1::kOperatorSupportPort, &supportError)) {
+        std::cerr << "Prone operator-support loopback listener unavailable: "
+                  << supportError << "; no motor packets were sent.\n";
+        return 3;
+      }
+    }
+
     // The Unitree SDK examples actively send before expecting state. Starting
     // the send loop first also creates the return path when Ubuntu reaches the
     // robot through the onboard computer's NAT.
@@ -1880,6 +1890,7 @@ public:
     controlLoop_.shutdown();
     sendLoop_.shutdown();
     recvLoop_.shutdown();
+    supportServer_.stop();
     if (!core_.writeLog()) return 2;
     std::cout << "Hardware run complete: samples=" << core_.logCount()
               << ", log=" << options_.logPath << '\n';
@@ -2018,7 +2029,8 @@ private:
     const bool alive = hasState && lastRecv > 0 && now - lastRecv <= 20000000LL;
     Command command = core_.step(
         f, hasState, fresh, alive, recvResult_.load(), sendResult_.load(),
-        loopUs, now, watchdogActive_.load());
+        loopUs, now, watchdogActive_.load(),
+        isProneLowRiseMode(options_.mode) && supportServer_.active(now));
     copyCommand(command, &safetyPacket_);
     safety_.PositionLimit(safetyPacket_);
     if (hasState) {
@@ -2043,6 +2055,7 @@ private:
     return true;
   }
   Options options_; Safety safety_; UDP udp_; ExperimentCore core_;
+  go1::OperatorSupportServer supportServer_;
   LowCmd sendPacket_ = {}, safetyPacket_ = {}; LowState lowState_ = {};
   Feedback feedback_; Command publishedCommand_;
   std::mutex stateMutex_, commandMutex_;
