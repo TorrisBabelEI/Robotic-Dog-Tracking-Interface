@@ -5,3 +5,4 @@ experiment/src/__pycache__
 externals/unitree_legged_sdk/lib/python/amd64/**
 .DS_Store
 /logs/
+/Wenjian_test_walking_policy/
