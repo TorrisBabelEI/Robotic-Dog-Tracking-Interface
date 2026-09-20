@@ -154,6 +154,7 @@ def run_probe(port: int) -> int:
 
 
 def run_sender(port: int) -> int:
+    print(f"Starting support sender; connecting to 127.0.0.1:{port}", flush=True)
     try:
         import tkinter as tk
     except ImportError as error:
@@ -166,7 +167,12 @@ def run_sender(port: int) -> int:
         print(f"Cannot connect to the offline probe: {error}", file=sys.stderr)
         return 2
     connection.settimeout(0.2)
-    root = tk.Tk()
+    try:
+        root = tk.Tk()
+    except tk.TclError as error:
+        connection.close()
+        print(f"Cannot open support GUI: {error}", file=sys.stderr, flush=True)
+        return 2
     root.title("Offline prone-support input test")
     root.geometry("520x240")
     sequence = 0
@@ -183,7 +189,8 @@ def run_sender(port: int) -> int:
         sequence += 1
         try:
             connection.sendall(f"{command} {sequence}\n".encode("ascii"))
-        except OSError:
+        except OSError as error:
+            print(f"Support connection lost: {error}", file=sys.stderr, flush=True)
             pulse.cancel()
             label.configure(text="CONNECTION LOST", fg="red")
             button.configure(state="disabled")
@@ -217,10 +224,13 @@ def run_sender(port: int) -> int:
     root.bind("<FocusOut>", cancel)
     root.protocol("WM_DELETE_WINDOW", close)
     heartbeat()
+    print("Support GUI opened; keep the Pi probe and SSH tunnel running. "
+          "Click once in the GUI to test confirmation.", flush=True)
     try:
         root.mainloop()
     finally:
         connection.close()
+        print("Support sender closed.", flush=True)
     return 0
 
 

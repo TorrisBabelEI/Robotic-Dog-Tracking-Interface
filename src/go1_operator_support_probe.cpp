@@ -12,6 +12,8 @@ void stopSignal(int) { stopRequested = 1; }
 }
 
 int main() {
+  // SSH without a PTY pipes stdout; show readiness and transitions immediately.
+  std::cout << std::unitbuf;
   go1::OperatorSupportServer server;
   std::string error;
   if (!server.start(go1::kOperatorSupportPort, &error)) {

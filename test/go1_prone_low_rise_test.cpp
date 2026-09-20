@@ -1,6 +1,7 @@
 // Exercise the prone low-rise control core without linking Unitree or opening UDP.
 #define GO1_CORE_TEST
 #include "../src/go1_lowlevel_experiment.cpp"
+#include "../src/go1_operator_support.hpp"
 
 namespace {
 void require(bool ok, const char *message) {
@@ -15,13 +16,13 @@ Options proneOptions() {
 }
 
 struct Fixture {
-  ExperimentCore core{proneOptions()};
+  ExperimentCore core;
   Feedback f;
   Feedback feedbackAtStep;
   Command command;
   int64_t now = 1000000000LL;
 
-  Fixture() {
+  Fixture(Options options = proneOptions()) : core(options) {
     const std::array<float, kJointCount> observedProne{{
         -0.311616F, 1.275168F, -2.794212F,
          0.289090F, 1.272262F, -2.797724F,
@@ -183,6 +184,113 @@ void supportInterlock() {
           "continuous support should authorize gradual release");
 }
 
+void recoveryAndRelease() {
+  Fixture late;
+  late.reach(Phase::ProneSupportHold);
+  // A continuously asserted old input cannot authorize recovery.
+  for (int i = 0; i < 600; ++i) late.tick(true);
+  require(late.core.phase() == Phase::ProneSupportHold,
+          "hold must reject an assertion without a new false observation");
+  late.tick(false);
+  for (int i = 0; i < 300; ++i) late.tick(true);
+  late.tick(false);  // disconnect/lease expiry before the dwell completes
+  for (int i = 0; i < 300; ++i) late.tick(true);
+  require(late.core.phase() == Phase::ProneSupportHold,
+          "interrupted recovery dwell must restart");
+  for (int i = 0; i < 230; ++i) late.tick(true);
+  require(late.core.phase() == Phase::ProneRelease,
+          "late fresh confirmation must authorize release");
+  float previous = late.command.joint[1].kp;
+  for (int i = 0; i < 3000 && !late.core.done(); ++i) {
+    late.tick(false); // confirmation expires; no need to hold the button
+    require(late.command.joint[1].kp <= previous + 1e-6F,
+            "pulse expiry must not re-engage stiffness during release");
+    previous = late.command.joint[1].kp;
+  }
+  require(late.core.done() && late.core.failed() &&
+              late.core.faultReason() == "prone_floor_support_not_confirmed",
+          "recovered timeout must exit but preserve the failed-run record");
+  late.damping();
+
+  Fixture fault;
+  fault.reach(Phase::ProneSettle);
+  fault.tick(false);
+  for (int i = 0; i < 600; ++i) fault.tick(true);
+  require(fault.core.phase() == Phase::ProneRelease, "release not reached");
+  fault.tick(false, false, false);
+  require(fault.core.phase() == Phase::PanicDamping,
+          "release authorization must not mask feedback loss");
+  fault.damping();
+}
+
+void nonidealRelease() {
+  Fixture t;
+  t.reach(Phase::ProneSettle);
+  t.tick(false);
+  for (int i = 0; i < 510; ++i) t.tick(true);
+  require(t.core.phase() == Phase::ProneRelease, "release not reached");
+  t.f.joint[1].q = t.command.joint[1].q - 0.09F;
+  t.f.joint[1].dq = -0.29F;
+  t.tick(false, true, true, 0, false, false);
+  const float limited = t.command.joint[1].kp;
+  require(limited < 3.0F, "fixture did not constrain release stiffness");
+  t.f.joint[1].q = t.command.joint[1].q;
+  t.f.joint[1].dq = 0;
+  t.tick(false);
+  require(t.command.joint[1].kp <= limited,
+          "improved tracking must not raise stiffness during release");
+  t.f.rpy[0] = 0.06F;
+  t.tick(false);
+  require(t.core.phase() == Phase::PanicDamping &&
+              t.core.faultReason() == "prone_release_attitude",
+          "excess attitude during release must interrupt release");
+  t.damping();
+}
+
+void transportToCore() {
+  go1::OperatorSupportServer server;
+  std::string error;
+  require(server.start(0, &error), "offline loopback receiver failed to start");
+  struct SocketGuard {
+    int fd = -1;
+    ~SocketGuard() { if (fd >= 0) ::close(fd); }
+  } socket;
+  socket.fd = ::socket(AF_INET, SOCK_STREAM, 0);
+  require(socket.fd >= 0, "sender socket failed");
+  sockaddr_in address = {};
+  address.sin_family = AF_INET;
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  address.sin_port = htons(server.port());
+  require(::connect(socket.fd, reinterpret_cast<sockaddr *>(&address),
+                    sizeof(address)) == 0, "sender connect failed");
+  Fixture t;
+  t.reach(Phase::ProneSupportHold);
+  t.tick(false);
+  // Real loopback transport carries the sender's H/sequence protocol into
+  // the real core. Robot feedback and core time remain synthetic.
+  for (int i = 0; i < 620; ++i) {
+    if (i % 10 == 0) {
+      const std::string frame = "H " + std::to_string(i / 10 + 1) + "\n";
+      require(::send(socket.fd, frame.data(), frame.size(), 0) ==
+                  static_cast<ssize_t>(frame.size()), "heartbeat send failed");
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    t.tick(server.active(go1::operatorSupportNowNs()));
+  }
+  require(t.core.phase() == Phase::ProneRelease,
+          "TCP confirmation did not authorize recovery release");
+  ::close(socket.fd);
+  socket.fd = -1;
+  std::this_thread::sleep_for(std::chrono::milliseconds(120));
+  require(!server.active(go1::operatorSupportNowNs()),
+          "disconnect did not revoke transport confirmation");
+  for (int i = 0; i < 3000 && !t.core.done(); ++i)
+    t.tick(server.active(go1::operatorSupportNowNs()));
+  require(t.core.done() && t.core.failed(),
+          "authorized release must finish and preserve timeout failure");
+  t.damping();
+}
+
 void cancellationAndFaults() {
   Fixture effort;
   effort.reach(Phase::ProneRise);
@@ -203,12 +311,15 @@ void cancellationAndFaults() {
           "single Ctrl-C must return before releasing impedance");
   cancel.tick();
   validateBoundedPositionCommand(cancel);
-  cancel.reach(Phase::ProneSupportHold);
-  require(!cancel.core.failed() && !cancel.core.done(),
-          "single Ctrl-C return must end in a non-fault latched hold");
+  cancel.reach(Phase::ProneSettle);
+  cancel.tick(false);
   for (int i = 0; i < 600; ++i) cancel.tick(true);
-  require(cancel.core.phase() == Phase::ProneSupportHold,
-          "cancellation must not release merely because support is present");
+  require(cancel.core.phase() == Phase::ProneRelease && !cancel.core.failed(),
+          "cancelled return must allow a fresh confirmed release");
+  for (int i = 0; i < 3000 && !cancel.core.done(); ++i) cancel.tick(false);
+  require(cancel.core.done() && !cancel.core.failed(),
+          "cancelled run must finish damping after confirmed release");
+  cancel.damping();
 
   Fixture twice;
   twice.reach(Phase::ProneRise);
@@ -273,6 +384,61 @@ void cancellationAndFaults() {
   speed.damping();
 }
 
+void engagementOnly() {
+  Options options = proneOptions(); options.mode = ExperimentMode::ProneEngagement;
+  for (int scenario = 0; scenario < 3; ++scenario) {
+    Fixture t(options);
+    bool cancelled = false;
+    bool sawSettle = false, sawRelease = false, sawHold = false;
+    std::array<float, kJointCount> target;
+    for (std::size_t i=0;i<kJointCount;++i)
+      target[i] = clampValue(t.f.joint[i].q, kJointMin[i%3], kJointMax[i%3]);
+    for (int cycle=0;cycle<15000 && !t.core.done();++cycle) {
+      if (scenario == 1 && cycle == 1000) {
+        t.core.observeSignalCount(1,t.now,t.f); cancelled=true;
+      }
+      const auto phase=t.core.phase();
+      const bool support = (phase == Phase::ProneSettle && scenario != 2 &&
+                            t.core.phaseElapsedS() > 1.0) ||
+                           (phase == Phase::ProneSupportHold && t.core.phaseElapsedS() > 1.0);
+      sawHold = sawHold || phase == Phase::ProneSupportHold;
+      sawSettle = sawSettle || phase == Phase::ProneSettle;
+      sawRelease = sawRelease || phase == Phase::ProneRelease;
+      t.tick(support,true,true,0,false,false); // floor holds measured pose fixed
+      require(t.core.phase()!=Phase::ProneRise && t.core.phase()!=Phase::ProneRiseHold,
+              "engagement-only entered a rise phase");
+      if (isPronePositionPhase(t.core.phase())) {
+        for(std::size_t i=0;i<kJointCount;++i) {
+          const auto &j=t.command.joint[i];
+          require(std::fabs(j.q-target[i])<1e-6F && j.dq==0 && j.tauFf==0 && j.kp<=1,
+                  "engagement-only changed target or exceeded gains");
+          const double tau=j.kp*(j.q-t.f.joint[i].q)-j.kd*t.f.joint[i].dq;
+          require(std::fabs(tau)<=0.100001, "engagement-only effort bound exceeded");
+        }
+      }
+    }
+    require(t.core.done() && sawSettle && sawRelease, "stationary engagement did not finish");
+    require(t.core.failed()==(scenario==2), "incorrect engagement acceptance status");
+    require(scenario!=1 || cancelled, "cancel scenario missing");
+    require(scenario!=2 || sawHold, "timeout scenario missing");
+    t.damping();
+  }
+  Fixture speed(options);
+  speed.reach(Phase::ProneEngage);
+  speed.f.joint[0].dq=0.081F;
+  speed.tick(false,true,true,0,false,false);
+  require(speed.core.phase()==Phase::PanicDamping,"engagement speed guard missing");
+  speed.damping();
+  char p[]="test", m[]="--mode", v[]="prone-engagement";
+  char prone[]="--prone-confirmed", remote[]="--remote-confirmed";
+  char *args[]={p,m,v,prone,remote};
+  bool rejected=false;
+  try { parseOptions(4,args); } catch (const std::runtime_error &) { rejected=true; }
+  require(rejected,"engagement hardware must require remote confirmation");
+  require(parseOptions(5,args).mode==ExperimentMode::ProneEngagement,
+          "explicit engagement hardware options were not accepted");
+}
+
 void hardwareLock() {
   char program[] = "test";
   char mode[] = "--mode";
@@ -295,8 +461,12 @@ int main() {
   const TestCase cases[] = {
       {"bounded nominal sequence and exact 5 mm kinematics", nominal},
       {"independent continuous support interlock", supportInterlock},
+      {"late confirmation recovery and pulse-expiry release", recoveryAndRelease},
+      {"TCP receiver to recovery core and disconnect", transportToCore},
+      {"nonideal release gain and attitude faults", nonidealRelease},
       {"cancel, feedback, watchdog, remote and envelope faults",
        cancellationAndFaults},
+      {"engagement-only stationary, cancel, timeout and speed", engagementOnly},
       {"hardware CLI rejected before UDP", hardwareLock}};
   for (const auto &test : cases) {
     try {

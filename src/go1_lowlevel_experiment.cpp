@@ -89,7 +89,7 @@ double smoothStep5Derivative(double x) {
 
 enum class ExperimentMode {
   RemotePreflight, GroundHandover, Preflight, TorqueSine, TorqueSineGround,
-  Squat, LegLift, LegLiftSequence, ProneLowRise
+  Squat, LegLift, LegLiftSequence, ProneLowRise, ProneEngagement
 };
 enum class Phase {
   Disarmed, RemotePreflight, Precheck, CapturePose, Baseline, Hold,
@@ -151,23 +151,24 @@ const char *modeName(ExperimentMode mode) {
   case ExperimentMode::LegLift: return "leg-lift";
   case ExperimentMode::LegLiftSequence: return "leg-lift-sequence";
   case ExperimentMode::ProneLowRise: return "prone-low-rise";
+  case ExperimentMode::ProneEngagement: return "prone-engagement";
   }
   return "unknown";
 }
 bool isLegMode(ExperimentMode mode) {
   return mode == ExperimentMode::LegLift || mode == ExperimentMode::LegLiftSequence;
 }
-bool isProneLowRiseMode(ExperimentMode mode) {
-  return mode == ExperimentMode::ProneLowRise;
+bool isProneMode(ExperimentMode mode) {
+  return mode == ExperimentMode::ProneLowRise || mode == ExperimentMode::ProneEngagement;
 }
 bool isGroundMode(ExperimentMode mode) {
   return mode == ExperimentMode::GroundHandover ||
          mode == ExperimentMode::TorqueSineGround ||
          mode == ExperimentMode::Squat || isLegMode(mode) ||
-         isProneLowRiseMode(mode);
+         isProneMode(mode);
 }
 bool requiresStandingCapture(ExperimentMode mode) {
-  return isGroundMode(mode) && !isProneLowRiseMode(mode);
+  return isGroundMode(mode) && !isProneMode(mode);
 }
 bool isPronePositionPhase(Phase phase) {
   return phase == Phase::ProneEngage || phase == Phase::ProneEngageHold ||
@@ -357,7 +358,7 @@ public:
         return std::string("nonfinite_") + kJointNames[i];
       float feedbackMin = kJointMin[i % 3];
       if ((options_.mode == ExperimentMode::RemotePreflight ||
-           isProneLowRiseMode(options_.mode)) && i % 3 == 2)
+           isProneMode(options_.mode)) && i % 3 == 2)
         feedbackMin -= kProneCalfFeedbackMargin;
       if (joint.q < feedbackMin || joint.q > kJointMax[i % 3])
         return std::string("joint_limit_") + kJointNames[i];
@@ -371,7 +372,7 @@ public:
     if (isLegMode(options_.mode) &&
         ((!options_.dryRun && !options_.remoteConfirmed) || !f.remote.valid))
       return "remote_not_valid_for_leg_mode";
-    if (isProneLowRiseMode(options_.mode) && !f.remote.valid)
+    if (isProneMode(options_.mode) && !f.remote.valid)
       return "remote_not_valid_for_prone_mode";
     return "";
   }
@@ -415,7 +416,7 @@ public:
     if (phase_ == Phase::Disarmed) {
       if (options_.mode == ExperimentMode::RemotePreflight)
         transition(Phase::RemotePreflight);
-      else if (isProneLowRiseMode(options_.mode))
+      else if (isProneMode(options_.mode))
         transition(Phase::ProneObserve);
       else
         transition(Phase::Precheck);
@@ -522,16 +523,17 @@ public:
       const double x = phaseElapsedS_ / kProneEngageS;
       command = pronePositionCommand(
           proneEngagementQ_, zeroJointVelocity(),
-          static_cast<float>(kProneKp * smoothStep5(x)), feedback);
+          static_cast<float>(proneMaxKp() * smoothStep5(x)), feedback);
       if (phaseElapsedS_ >= kProneEngageS)
         transition(Phase::ProneEngageHold);
       break;
     }
     case Phase::ProneEngageHold:
       command = pronePositionCommand(proneEngagementQ_, zeroJointVelocity(),
-                                     kProneKp, feedback);
+                                     proneMaxKp(), feedback);
       if (updateProneStable(feedback, proneEngagementQ_, recvFresh, recvAlive)) {
-        transition(Phase::ProneRise);
+        transition(options_.mode == ExperimentMode::ProneEngagement
+                       ? Phase::ProneSettle : Phase::ProneRise);
       } else if (phaseElapsedS_ >= 3.0) {
         requestProneStop("prone_engagement_not_settled", feedback, hostNs);
       }
@@ -546,14 +548,14 @@ public:
         target[i] = proneEngagementQ_[i] + static_cast<float>(delta * p);
         velocity[i] = static_cast<float>(delta * pd);
       }
-      command = pronePositionCommand(target, velocity, kProneKp, feedback);
+      command = pronePositionCommand(target, velocity, proneMaxKp(), feedback);
       if (phaseElapsedS_ >= kProneMoveS)
         transition(Phase::ProneRiseHold);
       break;
     }
     case Phase::ProneRiseHold:
       command = pronePositionCommand(proneRiseQ_, zeroJointVelocity(),
-                                     kProneKp, feedback);
+                                     proneMaxKp(), feedback);
       if (updateProneStable(feedback, proneRiseQ_, recvFresh, recvAlive)) {
         beginProneReturn();
       } else if (phaseElapsedS_ >= 3.0) {
@@ -570,16 +572,20 @@ public:
         target[i] = proneReturnStartQ_[i] + static_cast<float>(delta * p);
         velocity[i] = static_cast<float>(delta * pd);
       }
-      command = pronePositionCommand(target, velocity, kProneKp, feedback);
+      command = pronePositionCommand(target, velocity, proneMaxKp(), feedback);
       if (phaseElapsedS_ >= kProneMoveS)
         transition(Phase::ProneSettle);
       break;
     }
-    case Phase::ProneSettle: {
+    case Phase::ProneSettle:
+    case Phase::ProneSupportHold: {
       command = pronePositionCommand(proneEngagementQ_, zeroJointVelocity(),
-                                     kProneKp, feedback);
-      if (!stopSource_.empty()) {
-        holdProne(stopSource_, hostNs);
+                                     proneMaxKp(), feedback);
+      // Only normal cancellation and a missed operator confirmation may
+      // recover through a new contact assertion. Other faults stay held.
+      if (!stopSource_.empty() && stopSource_ != "ctrl_c" &&
+          stopSource_ != "prone_floor_support_not_confirmed") {
+        if (phase_ != Phase::ProneSupportHold) holdProne(stopSource_, hostNs);
         break;
       }
       const bool settled = proneTargetSettled(
@@ -605,23 +611,29 @@ public:
       if (settled && supportEligible && supportedS >= kProneHoldS) {
         exitSupportConfirmed_ = true;
         transition(Phase::ProneRelease);
-      } else if (phaseElapsedS_ >= kProneSupportTimeoutS) {
+      } else if (phase_ == Phase::ProneSettle &&
+                 phaseElapsedS_ >= kProneSupportTimeoutS) {
         holdProne("prone_floor_support_not_confirmed", hostNs);
         command = pronePositionCommand(proneEngagementQ_, zeroJointVelocity(),
-                                       kProneKp, feedback);
+                                       proneMaxKp(), feedback);
       }
       break;
     }
-    case Phase::ProneSupportHold:
-      command = pronePositionCommand(proneEngagementQ_, zeroJointVelocity(),
-                                     kProneKp, feedback);
-      break;
     case Phase::ProneRelease: {
+      // The fresh one-second dwell authorizes this whole release. The GUI's
+      // short pulse is an acknowledgement, not a continuous contact sensor.
+      // Expiry must not re-engage stiffness; normal feedback/remote fault
+      // checks still run before this state on every cycle.
       const double remaining = 1.0 - smoothStep5(
           phaseElapsedS_ / kProneReleaseS);
       command = pronePositionCommand(
           proneEngagementQ_, zeroJointVelocity(),
-          static_cast<float>(kProneKp * remaining), feedback);
+          static_cast<float>(proneMaxKp() * remaining), feedback);
+      // A reduced tracking error can relax the effort limiter. Never let
+      // that raise an already-released gain on a later cycle.
+      for (std::size_t i = 0; i < kJointCount; ++i)
+        command.joint[i].kp = std::min(command.joint[i].kp,
+                                      lastCommand_.joint[i].kp);
       if (phaseElapsedS_ >= kProneReleaseS) {
         dampingCommandNs_ = hostNs;
         transition(Phase::ProneFinalDamping);
@@ -816,6 +828,12 @@ public:
   }
 
 private:
+  float proneMaxKp() const {
+    return options_.mode == ExperimentMode::ProneEngagement ? 1.0F : kProneKp;
+  }
+  float proneEffortLimit() const {
+    return options_.mode == ExperimentMode::ProneEngagement ? 0.10F : kProneEffortLimitNm;
+  }
   static std::array<float, kJointCount> zeroJointVelocity() {
     std::array<float, kJointCount> result;
     result.fill(0.0F);
@@ -881,7 +899,8 @@ private:
       auto raisedFoot = initialFeet_[leg];
       // Holding the foot in place while moving it downward in trunk
       // coordinates raises the trunk by the same nominal amount.
-      raisedFoot.z -= kProneRiseM;
+      if (options_.mode != ExperimentMode::ProneEngagement)
+        raisedFoot.z -= kProneRiseM;
       go1::JointAngles result;
       if (!go1::Kinematics::inverse(which, raisedFoot, seed, &result))
         return false;
@@ -901,7 +920,7 @@ private:
       const std::array<float, kJointCount> &velocity, float requestedKp,
       const Feedback &f) const {
     Command command;
-    requestedKp = clampValue(requestedKp, 0.0F, kProneKp);
+    requestedKp = clampValue(requestedKp, 0.0F, proneMaxKp());
     for (std::size_t i = 0; i < kJointCount; ++i) {
       auto &joint = command.joint[i];
       joint.mode = kServoMode;
@@ -912,11 +931,13 @@ private:
       const float velocityError = velocity[i] - f.joint[i].dq;
       const float dampingBound = joint.kd * std::fabs(velocityError);
       const float remaining = std::max(0.0F,
-          kProneEffortLimitNm - dampingBound);
+          proneEffortLimit() - dampingBound);
       const float positionError = target[i] - f.joint[i].q;
       joint.kp = std::fabs(positionError) > 1.0e-6F
           ? std::min(requestedKp, remaining / std::fabs(positionError))
           : requestedKp;
+      if (options_.mode == ExperimentMode::ProneEngagement && !stopSource_.empty())
+        joint.kp = std::min(joint.kp, lastCommand_.joint[i].kp);
     }
     return command;
   }
@@ -927,7 +948,8 @@ private:
     for (std::size_t i = 0; i < kJointCount; ++i)
       settled = settled && std::isfinite(f.joint[i].q) &&
           std::isfinite(f.joint[i].dq) &&
-          std::fabs(f.joint[i].q - target[i]) <= 0.05F &&
+          std::fabs(f.joint[i].q - target[i]) <=
+              (options_.mode == ExperimentMode::ProneEngagement ? 0.10F : 0.05F) &&
           std::fabs(f.joint[i].dq) <= 0.05F;
     settled = settled && std::fabs(f.rpy[0] - initialRpy_[0]) <= 0.05F &&
                           std::fabs(f.rpy[1] - initialRpy_[1]) <= 0.05F;
@@ -1027,7 +1049,7 @@ private:
     }
     if (!recvFresh) return;
     invalidFeedbackStreak_ = 0;
-    if (isProneLowRiseMode(options_.mode) && !f.remote.valid) {
+    if (isProneMode(options_.mode) && !f.remote.valid) {
       enterPanic("remote_invalid_for_prone_mode", nowNs);
       return;
     }
@@ -1043,7 +1065,7 @@ private:
         enterPanic(std::string("nonfinite_feedback_") + kJointNames[i], nowNs); return;
       }
       float feedbackMin = kJointMin[i % 3];
-      if (isProneLowRiseMode(options_.mode) && i % 3 == 2)
+      if (isProneMode(options_.mode) && i % 3 == 2)
         feedbackMin -= kProneCalfFeedbackMargin;
       if (j.q < feedbackMin || j.q > kJointMax[i % 3]) {
         enterPanic(std::string("joint_limit_") + kJointNames[i], nowNs); return;
@@ -1063,7 +1085,8 @@ private:
         enterPanic(std::string("prone_tracking_error_") + kJointNames[i], nowNs);
         return;
       }
-      const double limit = isProneLowRiseMode(options_.mode) ? 0.3
+      const double limit = options_.mode == ExperimentMode::ProneEngagement ? 0.08
+                         : isProneMode(options_.mode) ? 0.3
                          : inExitEnvelope() ? 0.3 : isLegMotionPhase(phase_) ? 0.8
                          : isGroundMode(options_.mode) ? 1.0 : 2.0;
       if (std::fabs(j.dq) > limit) {
@@ -1074,11 +1097,15 @@ private:
       for (float angle : f.rpy) {
         if (!std::isfinite(angle)) { enterPanic("nonfinite_imu", nowNs); return; }
       }
-      const double limit = isProneLowRiseMode(options_.mode) ? 0.05
+      const double limit = isProneMode(options_.mode) ? 0.05
                          : inExitEnvelope() || isLegMotionPhase(phase_) ? 0.10 : 0.20;
       if (std::fabs(f.rpy[0] - initialRpy_[0]) > limit ||
-          std::fabs(f.rpy[1] - initialRpy_[1]) > limit)
-        requestSoftStop("ground_attitude_soft_abort", f, nowNs);
+          std::fabs(f.rpy[1] - initialRpy_[1]) > limit) {
+        if (phase_ == Phase::ProneRelease)
+          enterPanic("prone_release_attitude", nowNs);
+        else
+          requestSoftStop("ground_attitude_soft_abort", f, nowNs);
+      }
     }
   }
   void observeRemoteStop(const Feedback &f, bool fresh, int64_t nowNs) {
@@ -1439,7 +1466,7 @@ private:
     transition(Phase::Return);
   }
   void requestSoftStop(const std::string &source, const Feedback &f, int64_t nowNs) {
-    if (isProneLowRiseMode(options_.mode)) {
+    if (isProneMode(options_.mode)) {
       requestProneStop(source, f, nowNs);
       return;
     }
@@ -1471,7 +1498,7 @@ private:
     // window. Ground-mode panic remains latched until the operator requests
     // exit explicitly.
     if (options_.mode == ExperimentMode::RemotePreflight ||
-        isProneLowRiseMode(options_.mode))
+        isProneMode(options_.mode))
       requestPanicExit(nowNs);
   }
   void requestPanicExit(int64_t nowNs) {
@@ -1550,7 +1577,7 @@ private:
     if (next == Phase::ContactVerify) contactGateSeconds_ = 0;
     if (next == Phase::ProneEngageHold || next == Phase::ProneRiseHold)
       proneStableS_ = 0.0;
-    if (next == Phase::ProneSettle) {
+    if (next == Phase::ProneSettle || next == Phase::ProneSupportHold) {
       proneSupportStableStartNs_ = 0;
       proneSupportReadyForNewAssert_ = false;
       exitStableS_ = 0.0;
@@ -1651,7 +1678,7 @@ int runDry(const Options &options) {
        0.302533F, 1.237503F, -2.768375F}};
   for (std::size_t leg = 0; leg < 4; ++leg) {
     const std::size_t b = leg * 3;
-    if (isProneLowRiseMode(options.mode)) {
+    if (isProneMode(options.mode)) {
       for (std::size_t joint = 0; joint < 3; ++joint)
         f.joint[b + joint].q = observedProne[b + joint];
     } else {
@@ -1673,7 +1700,7 @@ int runDry(const Options &options) {
   for (std::size_t cycle = 0; cycle < maxCycles && !core.done(); ++cycle) {
     const double elapsed = cycle * kControlDt;
     updateDryFootForces(core, &f);
-    simulatePlant(command, &f, isProneLowRiseMode(options.mode));
+    simulatePlant(command, &f, isProneMode(options.mode));
     if (options.mode == ExperimentMode::RemotePreflight)
       for (std::size_t leg = 0; leg < 4; ++leg)
         f.joint[leg * 3 + 2].q = -2.80F;
@@ -1704,7 +1731,7 @@ int runDry(const Options &options) {
     const bool simulatedSupport =
         (options.dryRunNormalExit && core.phase() == Phase::ExitVerify &&
          core.phaseElapsedS() >= 1.5) ||
-        (isProneLowRiseMode(options.mode) &&
+        (isProneMode(options.mode) &&
          core.phase() == Phase::ProneSettle &&
          core.phaseElapsedS() >= 1.5);
     command = core.step(f, true, true, true, 0, 0, 2000, now, watchdog,
@@ -1851,13 +1878,21 @@ public:
       lastCommandPublishNs_.store(steadyNowNs());
     }
 
-    if (isProneLowRiseMode(options_.mode)) {
+    if (isProneMode(options_.mode)) {
       std::string supportError;
       if (!supportServer_.start(go1::kOperatorSupportPort, &supportError)) {
         std::cerr << "Prone operator-support loopback listener unavailable: "
                   << supportError << "; no motor packets were sent.\n";
         return 3;
       }
+    }
+
+    if (options_.mode == ExperimentMode::ProneEngagement) {
+      std::cout << "Support receiver ready; no motor packets sent yet. Open the Ubuntu GUI.\n"
+                   "With belly/all feet on floor and remote ready, press Enter here to begin: "
+                << std::flush;
+      std::string ready;
+      if (!std::getline(std::cin, ready) || gSignalCount > 0) return 130;
     }
 
     // The Unitree SDK examples actively send before expecting state. Starting
@@ -1867,7 +1902,16 @@ public:
     recvLoop_.start();
     controlLoop_.start();
     bool safeShown = false, panicShown = false;
+    Phase shownPhase = Phase::Disarmed;
     while (!finished_.load()) {
+      const Phase phase = reportedPhase_.load();
+      if (isProneMode(options_.mode) && phase != shownPhase) {
+        shownPhase = phase;
+        std::cout << "phase=" << phaseName(phase) << std::endl;
+        if (phase == Phase::ProneSettle || phase == Phase::ProneSupportHold)
+          std::cout << "CONFIRM CONTACT NOW: click once only if belly and all feet remain on floor. "
+                       "If movement/contact is abnormal, use L2+B; do not confirm." << std::endl;
+      }
       if (core_.safeHoldReached() && !safeShown) {
         safeShown = true;
         std::cout << "Sequence complete; holding four-foot pose. Press Ctrl-C "
@@ -1878,7 +1922,7 @@ public:
         std::cerr << "PANIC DAMPING ACTIVE: " << core_.faultReason()
                   << ". Keep clear.";
         if (options_.mode == ExperimentMode::RemotePreflight ||
-            isProneLowRiseMode(options_.mode))
+            isProneMode(options_.mode))
           std::cerr << " The prone preflight will close automatically after "
                        "its damping window.\n";
         else
@@ -2030,7 +2074,7 @@ private:
     Command command = core_.step(
         f, hasState, fresh, alive, recvResult_.load(), sendResult_.load(),
         loopUs, now, watchdogActive_.load(),
-        isProneLowRiseMode(options_.mode) && supportServer_.active(now));
+        isProneMode(options_.mode) && supportServer_.active(now));
     copyCommand(command, &safetyPacket_);
     safety_.PositionLimit(safetyPacket_);
     if (hasState) {
@@ -2043,6 +2087,7 @@ private:
     core_.amendLastLoggedCommand(command, watchdogActive_.load());
     { std::lock_guard<std::mutex> lock(commandMutex_); publishedCommand_ = command; }
     lastCommandPublishNs_.store(now);
+    reportedPhase_.store(core_.phase());
     if (core_.done()) finished_.store(true);
   }
   bool shouldPrintRemote(const Feedback &f, int64_t now) {
@@ -2059,6 +2104,7 @@ private:
   LowCmd sendPacket_ = {}, safetyPacket_ = {}; LowState lowState_ = {};
   Feedback feedback_; Command publishedCommand_;
   std::mutex stateMutex_, commandMutex_;
+  std::atomic<Phase> reportedPhase_{Phase::Disarmed};
   std::atomic<bool> hasState_{false}, watchdogActive_{false}, finished_{false};
   std::atomic<uint64_t> stateSequence_{0};
   std::atomic<int64_t> lastRecvNs_{0}, lastCommandPublishNs_{0};
@@ -2089,6 +2135,7 @@ int parseInt(const std::string &flag, const std::string &value) {
   return result;
 }
 void printUsage(const char *program) {
+  std::cout << "Engagement-only mode: --mode prone-engagement (no rise, Kp<=1).\n";
   std::cout << "Usage: " << program << " [options]\n\n"
       << "  --mode remote-preflight|ground-handover|preflight|torque-sine|\n"
          "         torque-sine-ground|squat|leg-lift|leg-lift-sequence|\n"
@@ -2126,6 +2173,7 @@ Options parseOptions(int argc, char **argv) {
       else if (v == "squat") o.mode = ExperimentMode::Squat;
       else if (v == "leg-lift") o.mode = ExperimentMode::LegLift;
       else if (v == "leg-lift-sequence") o.mode = ExperimentMode::LegLiftSequence;
+      else if (v == "prone-engagement") o.mode = ExperimentMode::ProneEngagement;
       else if (v == "prone-low-rise") o.mode = ExperimentMode::ProneLowRise;
       else throw std::runtime_error("Unknown mode: " + v);
     } else if (arg == "--leg") {
@@ -2172,11 +2220,11 @@ Options parseOptions(int argc, char **argv) {
   if (o.tauOverlayHz < 0.1 || o.tauOverlayHz > 3) throw std::runtime_error("--tau-overlay-hz must be in [0.1, 3]");
   if (o.supportConfirmed && o.groundConfirmed) throw std::runtime_error("support and ground confirmations are mutually exclusive");
   if (o.proneConfirmed && o.mode != ExperimentMode::RemotePreflight &&
-      !isProneLowRiseMode(o.mode))
+      !isProneMode(o.mode))
     throw std::runtime_error(
-        "--prone-confirmed is only valid with remote-preflight or prone-low-rise");
+        "--prone-confirmed is only valid with remote-preflight or a prone mode");
   if (!o.dryRun && (o.mode == ExperimentMode::RemotePreflight ||
-                    isProneLowRiseMode(o.mode)) &&
+                    isProneMode(o.mode)) &&
       !o.proneConfirmed)
     throw std::runtime_error("prone hardware mode requires --prone-confirmed");
   if (o.localPort == o.highLocalPort)
@@ -2185,13 +2233,15 @@ Options parseOptions(int argc, char **argv) {
     throw std::runtime_error("supported hardware mode requires --support-confirmed");
   if (!o.dryRun && requiresStandingCapture(o.mode) && !o.groundConfirmed)
     throw std::runtime_error("ground hardware mode requires --ground-confirmed");
+  if (!o.dryRun && o.mode == ExperimentMode::ProneEngagement && !o.remoteConfirmed)
+    throw std::runtime_error("prone-engagement requires --remote-confirmed");
   if (!o.dryRun && isLegMode(o.mode) && !o.remoteConfirmed)
     throw std::runtime_error("hardware leg-lift requires --remote-confirmed");
   if (o.mode == ExperimentMode::LegLiftSequence && !o.legAuto)
     throw std::runtime_error("leg-lift-sequence requires --leg auto");
   if (o.dryRunNormalExit && (!o.dryRun || o.mode != ExperimentMode::GroundHandover))
     throw std::runtime_error("--dry-run-normal-exit requires --dry-run --mode ground-handover");
-  if (!o.dryRun && isGroundMode(o.mode))
+  if (!o.dryRun && isGroundMode(o.mode) && o.mode != ExperimentMode::ProneEngagement)
     throw std::runtime_error(
         "ground hardware modes are locked pending prone-low-rise software "
         "verification and takeover review; no UDP opened");
@@ -2217,6 +2267,10 @@ int main(int argc, char **argv) {
     { std::ofstream probe(options.logPath.c_str(), std::ios::out | std::ios::app);
       if (!probe) throw std::runtime_error("cannot write log path: " + options.logPath); }
     if (options.mode != ExperimentMode::RemotePreflight) {
+      if (options.mode == ExperimentMode::ProneEngagement)
+        std::cout << "PRONE ENGAGEMENT TRIAL: all 12 joints, Kp<=1, zero feed-forward torque, "
+                     "no rise trajectory. Clamped calf targets can still move/load the robot.\n"
+                     "Confirm belly and all feet on floor, factory L2+B, remote ready.\n";
       std::cout << "WARNING: low-level control can injure people or damage the robot.\n"
                    "Software damping is not a physical emergency stop.\n"
                    "Type ARM and press Enter to continue: " << std::flush;

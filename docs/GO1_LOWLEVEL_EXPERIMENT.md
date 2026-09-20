@@ -7,20 +7,25 @@ do not count as hardware acceptance.
 | Chapter | Experiment | Current status |
 | --- | --- | --- |
 | [1](#chapter-1--remote-preflight) | Communication and remote preflight | Reported passing run: `remote_preflight_fix_02.csv` |
-| [2](#chapter-2--ground-handover) | Standing takeover and 10-second hold | Prone low-rise Ubuntu software gate passed; hardware locked pending real support input |
+| [2](#chapter-2--ground-handover) | Standing takeover and 10-second hold | Torque software matrix passed; recovery implementation updated; physical entry/release review pending |
 | [3](#chapter-3--squat-and-return) | Four-leg half-squat and return | Original dry-run completed and archived; hardware pending Chapter 2 |
 | [4](#chapter-4--single-leg-lift) | Weight transfer and one leg lift | Original dry-run completed and archived; hardware pending Chapter 3 |
 | [5](#chapter-5--four-leg-sequence) | Four sequential leg lifts | Original dry-run completed and archived; hardware pending Chapter 4 |
 
-**Current test cluster:** complete the software/Ubuntu-to-Pi confirmation
-channel in [2.1.11](#2111-consolidated-operator-input-transport-test--robot-off)
-as one session with the robot off. The earlier `remote-preflight` run already
-established that the computer/Pi sent low-level damping commands and received
-Go1 feedback; do not repeat it merely to prove computer control. The next new
-physical objective is one small prone movement, but its hardware CLI remains
-locked before UDP initialization or the `ARM` prompt. Passing the transport
-cluster alone does not unlock that movement. The goal-based sequence and its
-stopping points are in [2.1.13](#2113-goal-based-test-clusters).
+**Current status (2026-09-20):** operator transport (2.1.11), the complete
+torque software matrix (2.1.14, 10/10 cases), and revised prone recovery
+(2.1.16) are accepted from the operator's supplied results. Retain
+`logs/torque-software/review-hr0uqdbk/` and
+`logs/prone-recovery-software/review-6nblyb66/`. No routine repetition is needed.
+Further local readiness work is complete in 2.1.17: nonideal release fixes,
+recovery regression, and Ubuntu SDK command-adapter checks passed. The Pi ARM SDK check in 2.1.17 is accepted. The operator confirmed belly
+and all four feet on the floor after factory L2+B. Local implementation,
+28/28 regressions, and engagement-only simulation passed (2.1.19). The next
+operator block is **2.1.19: one first powered engagement-and-release trial**.
+Only the new `prone-engagement` mode is released for this narrow trial;
+`prone-low-rise`, standing, squat and leg-lift hardware modes remain locked.
+Older blanket statements about all ground modes being locked predate this
+specific release and still apply to the older modes.
 
 The operator confirmed no support equipment and requested continued development
 without external lifting. Section 2.1.6 is closed; lack of a rig is not a
@@ -51,6 +56,24 @@ there is no command-line override. The hardware references in Chapters 2–5
 remain blocked pending endpoint and standing-takeover review.
 
 ## Common setup and operating rules
+
+### Execution ownership — operator preference recorded 2026-09-20
+
+Codex runs local Ubuntu simulations, offline analysis, builds, and software
+verification directly. After a passing local block, continue to the next
+authorized step without waiting for the operator to say proceed. Stop when
+Pi execution, physical observation, or a material operating decision is needed. Do not ask the operator to rerun a simulation that Codex
+can execute in this workspace merely to advance the conversation. For each
+work block, document the objective, exact commands/source revision or hashes,
+archive path, results, failures and corrections, and remaining acceptance gaps
+in this manual or an explicitly linked report. Preserve completed evidence;
+rerun only when changed code or an unresolved result warrants it.
+
+When a block requires execution on the Pi, involve the operator with one
+complete, reviewable command sequence and expected outcomes. The operator
+participates in Pi execution and physical robot observations; do not launch
+Pi processes or robot motion autonomously. Complete available local preparation
+and verification first. This preference does not itself release a hardware lock.
 
 The reported `remote_preflight_fix_02.csv` run passed the preflight metrics:
 497.90 Hz feedback, 2.193 ms p99 gap, 10.762 ms maximum gap, valid remote and
@@ -1870,6 +1893,24 @@ custom physical motion still needs a separate controlled acceptance plan.
 
 ### 2.1.11 Consolidated operator-input transport test — robot off
 
+**Accepted operator result, 2026-09-20; commands below are reference only.**
+The earlier Ubuntu transcript passed six pulse/lease tests, four cleanup tests,
+and five CTest cases, ending in `support_cluster=PASS`. The subsequent Pi
+transcript showed the listening banner, seven true/false pairs, and
+`Probe stopped; support=false`. The sender opened its GUI and the first run
+closed with `sender_exit=0`. The operator reported that the test worked.
+The second sender run was interrupted with Ctrl-C inside a Tkinter callback;
+that traceback followed a manual interruption and does not invalidate the
+first completed run. Close the GUI with its window close button for routine
+shutdown.
+
+Evidence limits: the supplied Terminal B text duplicates Terminal A, so it
+is not an independent tunnel transcript. The probe output has no timestamps
+or click count; it establishes received transitions, not a measured 1.5-second
+pulse duration or one pair per click. Acceptance here combines the operator's
+reported success with the existing timing tests. No repeat is requested and
+no physical contact or motor behavior is inferred.
+
 This entire section is **software and networking only**. The Go1 must be
 powered off, with no active custom motor controller. Connecting the Ubuntu
 laptop to the Pi over SSH for this test is allowed; do not start
@@ -1929,18 +1970,24 @@ stop and send the output rather than deleting another file.
 terminal A, leave this command running:
 
 ```bash
-ssh pi@192.168.12.1 \
+ssh -t pi@192.168.12.1 \
   'cd ~/Robotic-Dog-Tracking-Interface && \
    ./build-support-probe/go1_operator_support_probe'
 ```
 
 It should say `C++ offline support probe listening on 127.0.0.1:18092; no Go1
-SDK or motor commands`. In terminal B, leave the tunnel running:
+SDK or motor commands`. The `-t` gives the probe a terminal so Ctrl-C
+reaches it; the probe also flushes its output when run without a terminal.
+Keep A running. In terminal B, leave the tunnel running:
 
 ```bash
 ssh -N -o ExitOnForwardFailure=yes \
   -L 127.0.0.1:18092:127.0.0.1:18092 pi@192.168.12.1
 ```
+
+After authentication, terminal B normally stays blank: `ssh -N` runs no
+remote command. Leave it running while using terminal C; Ctrl-C closes the
+tunnel. A quiet tunnel alone does not prove the Pi probe is listening.
 
 This exposes port 18092 only on Ubuntu loopback and forwards to Pi loopback.
 Do not use `-g` or bind `0.0.0.0`. If the local port is already occupied by
@@ -1954,6 +2001,12 @@ cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
 conda activate dog_ctrl
 python3 experiment/operator_support_gate.py sender
 ```
+
+The sender prints its connection attempt and `Support GUI opened`; a desktop
+window should appear and terminal C should stay occupied until it closes.
+An immediate return without a window is not a passing test. If this happens,
+retain the output and run `echo "sender_exit=$?"` immediately after the sender
+command. Connection or display failures should print an error.
 
 Click once. Terminal A should show `support=true`, then `support=false`
 automatically after about 1.5 seconds without continuing to hold the button.
@@ -2006,7 +2059,7 @@ channel, or the explicit hardware lock below.
 | Cluster | Objective and existing evidence | Completion / next action |
 | --- | --- | --- |
 | A — computer-to-Go1 command and feedback | Already completed by the archived `remote_preflight_fix_02.csv` run: the Pi-origin low-level damping stream and Go1 feedback were observed. This is **real computer control**, but not a movement test. | Accepted. Do not repeat solely to prove the link. |
-| B — independent operator confirmation, Ubuntu to Pi | Run all of 2.1.11 with the robot off: one software script, one Pi probe, one SSH tunnel, one click. | `support_cluster=PASS` and Pi `support=true` followed by automatic `support=false`. Then stop the probe/tunnel. No separate report is needed if it passes. |
+| B — independent operator confirmation, Ubuntu to Pi | Accepted operator report on 2026-09-20: software cluster passed; Pi support transitions and clean probe shutdown observed; GUI first run exited 0. See 2.1.11 for evidence limits. | Complete. No routine repetition. Continue to the whole development block in 2.1.14. |
 | C — first simple motion | One 5-mm *nominal* prone body rise, return to the floor, then damping, using the single-click confirmation only after visible floor contact. This is the next **new** physical objective, not a standing or walking test. | **Not executable yet.** The `prone-low-rise` CLI lock must remain until the physical stop/recovery path and command-effort behavior are reviewed against real hardware. A successful B does not itself satisfy that review. No command in this manual bypasses the lock. |
 | D — repeatability and larger actions | Only after one C run is archived and its measured motion, feedback, faults, and final damping are accepted, consider a small number of identical prone repetitions. Standing hold, squat, and leg lift remain later, separate objectives. | Do not batch them into the first physical movement session or infer safety from a predicted torque limit. |
 
@@ -2017,9 +2070,737 @@ operator's earlier observation that the robot lay still after factory damping
 supports the chosen prone starting pose, but does not establish that a new
 low-level position command will exert negligible force. The present software
 limits the *predicted* joint effort; it has not measured or bounded the actual
-floor contact force, and a missing confirmation currently latches a position
-hold. Those are the specific reasons C remains locked, rather than a demand
+floor contact force, and a missing confirmation enters a position
+hold. Section 2.1.16 now permits a fresh confirmation to recover from that
+hold, while preserving the timeout in the failed-run record. Those are the specific reasons C remains locked, rather than a demand
 for more tiny UI checks.
+
+### 2.1.14 Next whole block — torque command and analysis verification
+
+**Accepted operator result, 2026-09-20.** The supplied Ubuntu transcript and
+matrix review show `torque_software_cluster=PASS (10/10)` in
+`logs/torque-software/review-hr0uqdbk/`. Retain that archive. The six normal
+runs and four stop cases passed; no repetition is needed. At 0.10 Nm the
+reported RMSE was 0.02206, 0.00875, and 0.00449 Nm at 0.5, 1, and 2 Hz;
+the corresponding gains were 0.897, 0.934, and 0.946. These are simulated
+response metrics. Correlation-based negative lag values are alignment results,
+not measured negative hardware latency. The commands below remain reference
+instructions for a future relevant regression.
+
+**Executable now on Ubuntu; robot off/disconnected.** This is one complete
+batch toward torque tracking, replacing the previous non-executable next-step
+outline. It exercises the real `torque-sine` command implementation and log
+analyzer using simulated feedback. No SSH, Pi probe, GUI click, robot Wi-Fi,
+Programming Module change, or support equipment is needed for this block.
+
+**Run the whole block in one Ubuntu terminal:**
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+conda activate dog_ctrl
+python3 -B experiment/run_go1_torque_cluster.py
+```
+
+The script is in the current local checkout; it has not been committed or
+pushed automatically. These commands run the modified local files directly.
+It creates a unique `logs/torque-software/review-*` archive, builds
+`go1_lowlevel_simulator` in a temporary directory, runs the complete matrix,
+validates every CSV, and invokes the existing analyzer for FR_1. The simulator
+is compiled without `GO1_WITH_SDK` and does not link Unitree's library. The
+script always supplies `--dry-run`. ROS/catkin discovery is disabled for this
+standalone build, so this block does not need ROS Python build dependencies.
+
+| Cases | Parameters / objective |
+| --- | --- |
+| Six normal runs | FR_1; 0.10 and 0.20 Nm excitation amplitudes, each at 0.5, 1.0, and 2.0 Hz; six cycles per run (12, 6, or 3 seconds) |
+| Normal cancellation | Inject single Ctrl-C at simulated t=4 s; check return and completion |
+| Remote stop | Inject L2+B at simulated t=4 s; check the exact fault reason and damping commands on all joints |
+| Double Ctrl-C | Inject at simulated t=4 s; check panic damping and completion |
+| Watchdog | Inject at simulated t=4 s; check watchdog reason, damping, and completion |
+
+The validator checks the full phase sequence, excitation duration, reconstructed
+command waveform, zero feed-forward excitation on unselected joints, and the
+expected stop/fault behavior. Injected stop responses must appear within 20 ms
+of the scheduled simulation event. This is a software timing check, not a
+measurement of radio, network, or motor latency.
+
+**What torque is actually being tested:** in this implementation,
+`torque-sine` sets the selected joint's SDK `Kp=Kd=0` but computes
+
+```text
+tau_ff = enveloped_sine + 2 * (captured_q - measured_q) - 0.2 * measured_dq
+```
+
+Thus `--amplitude-nm` is the sine component's amplitude, not a bound on the
+complete torque command. The restoring terms remain present. This mode sends
+a torque command; it does not close a torque-error feedback loop around
+`tauEst`. The batch checks that exact command and reports response metrics
+against total commanded torque, rather than labeling it pure sine tracking.
+
+**Expected final output:**
+
+```text
+torque_software_cluster=PASS (10/10)
+archive=/home/aims/Yuxuan/Robotic-Dog-Tracking-Interface/logs/torque-software/review-...
+```
+
+The whole batch stops at its first failed command or validation. Read the
+reported error file and retain that archive; do not compensate by running a
+hardware command. Temporary build files are removed, but all experiment logs,
+analysis outputs, command lines, and results remain in the archive.
+
+**Review all cases together after the batch:** this prints the newest archive's
+result and torque metrics. Check that its path matches the path from your run.
+
+```bash
+python3 - <<'PYREVIEW'
+from pathlib import Path
+import csv
+root = Path('logs/torque-software')
+archives = [p for p in root.glob('review-*') if p.is_dir()]
+if not archives:
+    raise SystemExit('No torque archive found; run the block first.')
+archive = max(archives, key=lambda p: p.stat().st_mtime_ns)
+print('archive=' + str(archive.resolve()))
+print((archive / 'result.txt').read_text())
+matrix = archive / 'torque_matrix.csv'
+if not matrix.exists():
+    raise SystemExit('No completed matrix; inspect the failure above.')
+for row in csv.DictReader(matrix.open()):
+    print(f"{row['case']:18s} {row['result']} "
+          f"RMSE={float(row['tau_rmse_nm']):.5f} Nm "
+          f"gain={float(row['tau_gain_total']):.3f} "
+          f"lag={float(row['lag_s']):.4f} s")
+PYREVIEW
+```
+
+`torque_matrix.csv` contains the combined metrics. Each case also has a raw
+CSV, analyzer summary, analysis transcript, command record, and validation
+record. `manifest.json` records the Git revision and hashes of the local
+sources, including uncommitted changes. No copying or deletion on the Pi is
+part of this block.
+
+**Acceptance and its meaning:** all ten cases must pass waveform and
+phase/fault checks and produce finite response metrics. Do not apply hardware
+bandwidth or torque-accuracy thresholds to this simulator: its `tauEst` is
+constructed from a simplified plant with a 0.95 scale factor and artificial
+joint dynamics. Normal software completion passes through `SAFE_HOLD`; the
+dry-run then exits automatically. That is not a verified physical shutdown.
+These results validate command generation, fault handling, and the measurement
+pipeline; they do not establish real torque tracking or release hardware modes.
+
+**Next physical objective remains one complete prone engagement/rise/return.**
+The operator need not repeat this batch after a pass unless relevant code
+changes. The remaining controller work below must be completed by development,
+not delegated back as manual button checks. After physical entry and recovery
+are validated, a torque-overlay trial and measured amplitude/frequency response
+can use the same CSV analyzer. Pure torque operation still requires its own
+support/operating design; `--support-confirmed` is not a way to bypass the
+established no-rig setup.
+
+#### Controller review record before the physical session
+
+The table below records the findings before the recovery change. Section
+2.1.16 supersedes its cancellation and late-confirmation behavior and defines
+one-shot release authorization explicitly. Physical effort/contact review
+remains open; the table must not be interpreted as the current software
+behavior where 2.1.16 documents a change.
+
+**1. Retain completed evidence.** Use sections 2.1.8, 2.1.9, and 2.1.11 as the
+factory endpoint, software baseline, and operator transport records. Do not
+repeat factory motion, the original dry-runs, or the transport session solely
+to begin this work. The absence of lifting equipment remains the established
+setup, not a request to obtain a rig.
+
+**2. Resolve the following source-review findings.** The 2026-09-20 review of
+`src/go1_lowlevel_experiment.cpp` found:
+
+| Condition | Current implementation | Required outcome before a hardware procedure is released |
+| --- | --- | --- |
+| No eligible click during `PRONE_SETTLE` | After five seconds, enters `PRONE_SUPPORT_HOLD` with position stiffness active. A subsequent click cannot leave that phase. | Define and implement an explicit recovery from a missed/late confirmation, with a visible operator instruction and a bounded outcome; do not describe this state as shutdown. |
+| Single Ctrl-C during the rise | Returns toward the engagement target, then latches `PRONE_SUPPORT_HOLD`; the existing test deliberately checks that confirmation cannot release it. | Define a complete cancellation-to-supported-exit path and distinguish it from emergency damping. Update the tests and operating instructions together. |
+| Confirmation expires or the tunnel disconnects during `PRONE_RELEASE` | After a fresh one-second dwell has admitted release, the four-second release does not read `floorSupportObserved`. | Specify whether the click authorizes the entire release or must remain valid, and review loss-of-contact/transport behavior explicitly. The current 1.5-second pulse cannot provide continuous confirmation for the dwell plus four-second release. Do not silently lengthen the pulse or require a continuous hand-held button. |
+| Initial calf commands are clamped to SDK limits | Measured prone calf positions lie outside those command limits; engagement can exert effort even without a requested rise. | Review the measured pose mismatch, initial PD contribution, gain changes, and release response using the existing factory evidence; establish the hardware observation and abort criteria before sending position commands. |
+| Effort and movement limits | The 0.50 Nm limit is predicted PD effort; 5 mm is a nominal kinematic displacement. | Label these as command-model limits. Define how actual response will be observed and accepted; neither is a measured bound on floor force or actual body displacement. |
+
+The first three entries are specific software/operating-contract gaps. The
+last two require a concrete physical-test design grounded in the archived
+measurements. Passing another existing unit-test suite cannot close them.
+
+**3. Verify the revised complete action chain offline.** Once the control
+changes exist, run a focused regression block covering normal completion,
+late/missing/early clicks, pulse expiry and disconnect during release, normal
+cancellation, L2+B, feedback loss, and command-effort limits. Include the real
+sender/receiver protocol connected to the control core with synthetic robot
+feedback: a standalone probe cannot establish how the controller consumes
+confirmation. Record expected phase sequences and final command states for
+each case. These revised checks are development work, not instructions to
+inject faults into a powered robot.
+
+**4. Release one concrete operator procedure.** Update the code gate and this
+manual together only after reviewing the revised behavior and physical test
+conditions. The release must identify the exact revision, build/deployment
+commands, entry checks, normal and abnormal exit actions, logging fields,
+acceptance criteria, and recovery procedure. Until then, keep the existing
+hardware CLI rejection. Do not turn a dry-run into a hardware command by
+removing `--dry-run`.
+
+**Block completion:** implemented and reviewed recovery/confirmation behavior,
+focused offline results, and a runnable revision-specific version of 2.1.15.
+The operator has no additional transport work to do while this is pending.
+
+### 2.1.15 First prone motion — complete session outline, not yet released
+
+**Planning reference only.** This section defines the whole next physical
+session so preparation, motion, shutdown, and result review stay together.
+It intentionally contains no motor-launch command: 2.1.14 is not complete,
+and the current executable rejects `prone-low-rise` hardware operation.
+Do not begin this session with the present revision.
+
+Once released, perform the following stages as **one session**, without asking
+for a new conversational step between successful stages. Stop at an unexpected
+result and preserve its evidence rather than repeating motion immediately.
+
+1. **Prepare on Ubuntu with Internet available.** Record the released revision;
+   build and deploy exactly its approved inputs. Create a unique local archive
+   for this session and select an unused Pi log filename. Complete only the
+   checks required by the changed controller; retain earlier acceptance.
+2. **Establish the documented starting state.** Follow the released factory
+   startup-to-prone procedure, confirm visible trunk support and unobstructed
+   legs, and keep the remote available. Record the initial posture and any
+   abnormal sound or movement. Do not infer contact from joint position alone.
+3. **Establish command ownership and confirmation input.** Verify current
+   controller processes and port ownership; temporarily stop only the known
+   Programming Module using the existing exact-process procedure. Start the
+   confirmation tunnel and GUI. The actual controller must own the support
+   receiver; do not run the offline support probe alongside it on port 18092.
+4. **Run exactly one released prone action.** Observe initial damping, gradual
+   engagement, the small nominal rise, and return. No torque overlay, standing
+   hold, squat, or single-leg action belongs in this session. The released
+   procedure must state when to cancel and what that cancellation does.
+5. **Confirm contact at the requested phase and finish release.** Click only
+   after visible trunk contact and the controller's confirmation request.
+   Follow the revised timeout/disconnect handling from 2.1.14. Observe final
+   damping and process exit; a position-hold message is not completion. Do not
+   use GUI closure or SSH disconnection as a motor shutdown command.
+6. **Restore and close.** After the controller has exited and the robot is
+   floor-supported, restore the Programming Module with its documented wrapper.
+   Close the GUI and tunnel. Follow the established robot shutdown procedure
+   if ending the session.
+7. **Archive and review on Ubuntu.** Download the exact Pi CSV to the unique
+   session archive, compare SHA-256, and run the existing low-level analyzer.
+   Retain raw data, summary, plots, source revision, phase/fault console output,
+   and a written observation of contact, motion, slip, sound, and final state.
+   Retain the Pi original until the archive is verified. No cleanup is required
+   just to finish this test.
+8. **Decide from that one result.** Check the entire entry-to-exit sequence,
+   feedback quality, joint response, effort estimates, faults, and observed
+   contact against the released acceptance criteria. Synthetic thresholds alone
+   do not certify the physical result. Review an incomplete or abnormal run
+   before any repetition. Consider identical low-rise repetitions only after
+   the first result is accepted; larger actions remain separate later blocks.
+
+No run count, physical acceptance threshold, or recovery action omitted here
+should be improvised at the robot. Those details and exact commands must be
+filled in during 2.1.14 before this outline becomes executable.
+
+### 2.1.16 Prone recovery — complete executable software block
+
+**Accepted operator result, 2026-09-20.** The supplied transcript reports
+`prone_recovery_cluster=PASS` in
+`logs/prone-recovery-software/review-6nblyb66/`: revised recovery/release/core
+checks and all four normal, cancellation, remote-stop, and watchdog sequences
+passed. Acceptance here is based on that transcript. Retain the archive; no
+operator rerun is requested. Commands below remain reproducible reference
+instructions; Codex will execute future relevant local regressions directly.
+
+**Purpose:** verify the revised entry/return/release controller as one complete
+block before physical torque experiments depend on it. Run on Ubuntu with the
+robot off or disconnected. No Pi session, tunnel, GUI, or hardware controller
+is required. The script uses an SDK-free simulator and an ephemeral local TCP
+port for its receiver-to-core integration check.
+
+**Implemented changes:**
+
+- A single Ctrl-C during the rise returns to the prone engagement target and
+  permits a fresh contact confirmation to authorize normal release and damping.
+- A missed five-second confirmation deadline still records a failed trial and
+  holds position. A new false-to-true confirmation with a full one-second
+  settled dwell can now complete shutdown. The failure reason is retained;
+  recovered shutdown does not turn the experiment into a passing normal trial.
+- An old continuously asserted confirmation cannot release the recovery hold.
+  Loss of confirmation before completing the dwell restarts the dwell.
+- Once the dwell succeeds, its acknowledgement authorizes the complete
+  four-second release. Pulse expiry or sender disconnect does not restore
+  stiffness. The input is not continuous contact sensing. Feedback, watchdog,
+  and remote-stop checks continue to apply independently.
+- Other fault holds are not made recoverable merely by clicking the button.
+  If contact is never confirmed, position hold can still persist. This change
+  provides an explicit recovery route; it does not promise autonomous physical
+  shutdown in the absence of support evidence.
+
+**Run once in an Ubuntu terminal:**
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+conda activate dog_ctrl
+python3 -B experiment/run_go1_prone_recovery_cluster.py
+```
+
+This builds the changed core tests and simulator, checks nominal control,
+late/missing/early/interrupted confirmation, pulse expiry, cancellation,
+feedback and other existing faults, command bounds, and the hardware CLI lock.
+A real loopback TCP sender then drives the actual support receiver connected
+to the core with synthetic robot feedback, including disconnection after
+release authorization. It is automated; no manual transport repetition is
+needed. This test exercises the wire protocol, not the Tkinter GUI again.
+
+The script also produces and analyzes four full action logs: normal low-rise,
+cancellation at simulated t=8 s, remote stop at t=8 s, and watchdog at t=8 s.
+Normal/cancelled runs must return, settle, release and reach final damping.
+Injected faults must preserve their exact abort reasons and reach damping.
+Every run must reach `COMPLETE` with position-free damping commands on all
+12 joints. Failed assertions or commands stop the block and preserve output.
+
+**Expected final output:**
+
+```text
+prone_recovery_cluster=PASS
+archive=/home/aims/Yuxuan/Robotic-Dog-Tracking-Interface/logs/prone-recovery-software/review-...
+```
+
+The unique archive contains `result.txt`, `recovery_core.txt`, four raw CSVs,
+phase-sequence records, analyzer summaries/transcripts, command records, build
+output, and source hashes. No file is overwritten and no Pi file is deleted.
+The script performs the acceptance checks; a second manual analyzer pass is
+not needed. If it fails, send the reported failure and its referenced text
+file rather than running the whole block again immediately.
+
+**Completion:** retain the result as software acceptance of the changed
+recovery path. Do not repeat the torque matrix or GUI probe to proceed.
+The next engineering decision is the first physical engagement/release test
+using the archived prone pose and command-effort calculations, followed by
+one low rise/return and eventually a measured torque overlay. This block
+resolves software recovery behavior but does not measure trunk contact force,
+validate a release trajectory on the robot, or unlock hardware commands.
+
+### 2.1.17 Readiness review and Pi SDK adapter — completed
+
+**Pi acceptance, 2026-09-20:** the operator supplied `pi_sdk_adapter=PASS`
+with passing damping, prone-engagement, and torque-channel checks from
+`logs/pi-sdk-adapter/review-68mDJRKk/`. Pi staging directory:
+`/home/pi/go1-sdk-adapter-review-68mDJRKk`. GNU 8.3.0 compiled and linked
+this fresh aarch64 build, and the resulting executable ran successfully.
+The initial password rejection was recovered; it is not a failed test.
+
+The approximately 7,723-second future-source timestamp warning is a clock
+skew between source timestamps and Pi time. This fresh build visibly compiled
+and linked the test; no rerun is needed solely for that warning. Future staging
+now uses `rsync -avR --no-times` so the fresh Pi files receive arrival times.
+No clock setting was changed and the completed archive is retained.
+The commands below are reference only; this block is complete.
+
+**Local work completed by Codex, 2026-09-20.** Reviewing nonideal feedback
+exposed two release issues beyond the earlier ideal-tracking tests:
+
+1. The effort limiter could permit Kp to increase when tracking error improved,
+   even during the intended stiffness release. Release Kp is now capped at its
+   preceding command value, so it cannot increase during that phase.
+2. Excess roll/pitch during release called a soft-stop path that did not
+   interrupt release. It now enters the existing panic-damping path with
+   `prone_release_attitude`. This is an emergency response, not controlled
+   lowering or proof against a physical drop.
+
+Added regression cases disturb joint tracking during release, then remove the
+error, and inject excessive roll. The complete recovery block was rerun with:
+
+```bash
+/home/aims/miniconda3/envs/dog_ctrl/bin/python3 -B experiment/run_go1_prone_recovery_cluster.py
+```
+
+**Result:** `prone_recovery_cluster=PASS`, including all four full action logs.
+Archive: `logs/prone-recovery-software/review-8m0xlhts/`. The operator's prior
+`review-6nblyb66/` remains valid evidence for its earlier revision. Do not rerun
+this updated local block on the operator's behalf; Codex has already done it.
+
+**Next local check performed:** added `go1_sdk_command_adapter_test`, which
+uses the actual command converters and bundled SDK `Safety` functions on
+synthetic states. It tests final/emergency damping, prone engagement, and a
+selected torque channel. It never constructs `UDP` or `HardwareRunner`.
+The reproducible configure/build/run sequence was:
+
+```bash
+# Executed locally by Codex with a fresh temporary build directory.
+cmake -S . -B "$GO1_ADAPTER_BUILD" -DBUILD_TESTING=OFF   -DBUILD_SDK_EXAMPLES=OFF -DPYTHON_BUILD=OFF   -DCMAKE_DISABLE_FIND_PACKAGE_catkin=TRUE
+cmake --build "$GO1_ADAPTER_BUILD" --target go1_sdk_command_adapter_test -j2
+strace -f -e trace=network -o "$GO1_ADAPTER_ARCHIVE/network.trace"   "$GO1_ADAPTER_BUILD/go1_sdk_command_adapter_test"
+```
+
+These are recorded execution steps, not another operator task. Exact expanded
+commands and source/library hashes are saved in each archive's `commands.json`
+and `sha256.json`.
+
+The initial check in `logs/sdk-adapter-software/review-b61z_n4d/` failed an
+assumption that the SDK preserves every position field: `PositionLimit`
+clamped the `PosStop` sentinel, including with `Kp=0`. The test was corrected
+to permit only this bounded zero-Kp position-field change while still requiring
+unchanged mode, velocity target, gains and feed-forward torque. This is a
+zero-stiffness command interpretation, not a firmware/contact measurement.
+No production SDK adapter behavior was changed to make the check pass.
+
+**Final Ubuntu result:** `sdk_command_adapter=PASS` and
+`network_syscalls=NONE` in `logs/sdk-adapter-software/review-h61bhc3y/`.
+The trace, build output, adapter output, source hashes and exact commands are
+archived. The test uses zero-power synthetic feedback for `PowerProtect`;
+it does not characterize protection thresholds or overload behavior.
+
+**Why the Pi is needed now:** Ubuntu links the bundled amd64 SDK library;
+the deployed controller uses its separately built ARM library. Verify the
+same command-field behavior with that actual library before any motor trial.
+This is one platform check, not a repeat of the torque sweeps or GUI tests.
+
+#### Operator command — one complete no-motion Pi block
+
+Use an available Pi SSH connection. Keep the robot's motors unpowered; if the
+onboard Pi cannot be reached independently of normal robot startup, stop and
+report that constraint instead of powering the robot merely for this check.
+Do not stop the Programming Module or start any motor controller.
+
+From **Ubuntu**, run:
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+bash experiment/run_go1_pi_adapter_check.sh
+```
+
+Enter the Pi password when requested. No conda environment is required.
+The script creates an isolated Pi staging directory and a unique Ubuntu
+archive, copies only required build inputs, builds the adapter test on the Pi,
+runs it, and saves the combined output back on Ubuntu. It does not alter the
+existing Pi controller checkout, open robot UDP ports, ask for ARM, or delete
+files. It deliberately does not run the full controller binary.
+
+Expected output after the build:
+
+```text
+PASS damping
+PASS prone engagement
+PASS torque channel
+NOTE: SDK PositionLimit clamps PosStop q with Kp=0; effort fields preserved
+sdk_command_adapter=PASS; no UDP constructed or motor commands sent
+pi_sdk_adapter=PASS
+archive=/home/aims/Yuxuan/Robotic-Dog-Tracking-Interface/logs/pi-sdk-adapter/review-...
+```
+
+The SDK may also print `End Safety.` at destruction. Preserve the archive
+and send the final result. A build failure or changed command field stops the
+script; send the referenced transcript without retrying by launching a motor
+program. The no-network syscall trace was obtained on Ubuntu; this Pi script
+does not require `strace` to be installed and does not claim a Pi syscall trace.
+
+**Boundary after this block:** a passing ARM adapter check validates library
+compatibility only. Prone calf measurements still differ from valid position
+command bounds; engagement can load the robot against the floor before any
+nominal 5-mm rise. Actual contact force and settling are not established by
+these software tests. The first physical session needs the reviewed contact,
+stop, and observation conditions in 2.1.15; do not remove a hardware lock or
+use `--support-confirmed` to proceed from this platform check.
+
+### 2.1.18 Engagement geometry — reviewed; starting posture confirmed
+
+**Operator observation received:** belly and all four feet are on the ground,
+placed in factory damping using L2+B. This answers the contact-layout question.
+It was not necessary for the prior SDK adapter test. Section 2.1.19 uses this
+layout as the required starting condition for the new physical trial.
+
+After Pi adapter acceptance, Codex evaluated the recorded factory prone pose
+from `GO1_NATIVE_RETURN_ANALYSIS.md` with the repository's forward kinematics.
+Only each calf was changed to the current command minimum, -2.721 rad; hips
+and thighs stayed at the measured pose. This isolates the change required by
+initial position engagement, before the requested 5-mm rise.
+
+Archive: `logs/engagement-review/review-ip3wjp1l/`. It includes the calculation
+source, executable, `geometry.csv`, exact compile/run commands in
+`commands.json`, and source hashes. The calculation used `g++ -std=c++14`,
+`src/go1_kinematics.cpp`, and the archived calculation source; no robot
+connection or simulation rerun was required.
+
+| Leg | Calf target change (rad) | Static Kp=5 contribution (Nm) | Modeled foot displacement (mm) | Foot z change (mm) |
+| --- | ---: | ---: | ---: | ---: |
+| FR | 0.073212 | 0.366060 | 15.59 | -14.78 |
+| FL | 0.076724 | 0.383620 | 16.34 | -15.61 |
+| RR | 0.078541 | 0.392705 | 16.72 | -15.96 |
+| RL | 0.047375 | 0.236875 | 10.09 | -9.61 |
+
+The effort column is `5 * (target_q - recorded_q)` at zero velocity and
+unchanged initial pose, before any subsequent physical response. It is not
+measured torque or a floor-force bound. The displacement is forward-kinematic
+foot movement relative to the trunk, not predicted body rise or measured
+contact motion. Floor constraints, friction, compliance and body contact
+can change the physical response substantially.
+
+**Decision:** initial engagement is itself a movement/load-transfer experiment;
+calling the whole first run a 5-mm motion understates the commanded geometric
+change. Plan a complete engagement-and-release trial before adding the nominal
+rise or torque excitation. Do not widen command limits to remove this mismatch.
+The existing hardware lock stays in place. The current `prone-low-rise` mode
+includes a rise; there is no released engagement-only hardware command yet.
+
+**Physical input now needed:** from the operator's existing observations of
+normal factory prone damping, establish whether the trunk is floor-supported
+with all four feet also touching the floor, or whether some feet are folded
+underneath, free, or not clearly visible. Record which feet if known. Do not
+power or move the robot solely to answer this question. This information is
+needed to define the contact assumptions and what the first engagement trial
+must observe. It is not a request to repeat the completed factory capture,
+transport check, or SDK test.
+
+### 2.1.19 First powered engagement and release — complete operator block
+
+**This block sends motor commands.** The preceding adapter test did not.
+Perform one trial, archive its result, and stop for review before repeating or
+adding a rise/torque excitation. It is a first hardware validation, not a
+claim that simulation establishes physical safety.
+
+#### Implemented profile and local acceptance
+
+New mode: `prone-engagement`. It starts with one second of quiet prone
+feedback in damping, ramps position stiffness over four seconds, checks one
+second of quiet feedback, waits for a fresh visual-contact acknowledgement,
+releases stiffness over four seconds, sends one second of final damping,
+and exits. It does not enter `PRONE_RISE` or apply feed-forward torque.
+All position targets remain at the captured pose clamped to existing SDK
+bounds; velocity targets stay zero.
+
+- Maximum Kp is 1 (one fifth of the low-rise fixture); Kd remains 1.
+- The position-command limiter budgets 0.10 Nm per joint using current
+  position/velocity feedback. Static initial calf contributions calculated
+  from the archived pose are about 0.047–0.079 Nm. These are predicted command
+  efforts, not measured contact forces. Emergency damping is not subject to
+  that position-command cap.
+- A fresh measured joint speed over 0.08 rad/s triggers emergency damping.
+  Roll/pitch excursion limit remains 0.05 rad; loss of feedback, remote validity,
+  or watchdog faults retains the existing damping response.
+- Quietness checks retain the 0.05 rad/s threshold. For this mode only, the
+  target-error gate is 0.10 rad instead of 0.05: stationary calves at the
+  recorded floor-supported pose must not be forced to reach their clamped
+  targets simply to allow release. Visual contact confirmation is still required.
+- A single Ctrl-C returns toward the same fixed target and then waits for
+  confirmation; gains cannot increase after cancellation. L2+B or double
+  Ctrl-C within one second requests emergency damping and automatic close.
+- A missing click after five seconds enters the recoverable support hold and
+  marks the trial failed. A new one-second confirmation dwell can finish release,
+  but the failure remains in the log. A hold message is not motor shutdown.
+
+**Codex local evidence:** updated recovery cases, including stationary
+floor-constrained feedback, cancellation, late confirmation and the tighter
+speed guard passed in `logs/prone-recovery-software/review-9jaac3eu/`.
+Full Linux build and CTest passed **28/28**, and the engagement-only dry-run
+and analyzer passed in `logs/prone-engagement-software/review-gfb8ae3m/`.
+The final hardware startup change was compiled and the SDK adapter rerun there.
+Exact commands, test outputs, CSV, and final source hashes are archived.
+No operator simulation repeat is needed.
+
+#### 1. Deploy from Ubuntu — no motion starts here
+
+Run in an **Ubuntu terminal**:
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+bash experiment/prepare_go1_prone_engagement.sh
+```
+
+This script contains `ssh` and `rsync`. It builds on the Pi in
+`/home/pi/go1-prone-engagement`, saves a unique Ubuntu deployment archive,
+and ends with `engagement_deployment=PASS; no controller started`.
+It does not replace the older `build-arm64` executable. If it fails, stop at
+that error. Preparation does not arm or launch the trial.
+
+#### 2. Prepare three terminals and confirm the physical starting state
+
+Use the established factory procedure to have the belly and all four feet
+on the flat floor, with L2+B damping selected. Do not lift the powered robot.
+Keep hands clear of the legs and the factory remote immediately available.
+Do not start if the posture or remote response is uncertain. The previous
+calf geometry calculation means even this engagement can move/load the robot;
+there is no guarantee of a motionless trial.
+
+**Terminal A on Ubuntu: open the Pi shell.** All commands in steps 3–4 and 6
+run inside this Pi shell:
+
+```bash
+ssh -t pi@192.168.12.1
+cd /home/pi/go1-prone-engagement
+```
+
+**Terminal B on Ubuntu: start the confirmation tunnel and leave it running.**
+A blank terminal after authentication is normal:
+
+```bash
+ssh -N -o ExitOnForwardFailure=yes \
+  -L 127.0.0.1:18092:127.0.0.1:18092 pi@192.168.12.1
+```
+
+If a port is occupied, identify its owner rather than killing an unknown
+process. Do not run an offline support probe: the controller owns that receiver.
+
+**Terminal C on Ubuntu: prepare the environment now, but wait until step 4
+to run the sender.**
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+conda activate dog_ctrl
+```
+
+#### 3. Terminal A / Pi — verify ownership and temporarily stop programming.py
+
+```bash
+ip route get 192.168.123.10
+pgrep -af 'go1_lowlevel_experiment|example_|run_torque_tracking' || true
+PROGRAMMING_PATTERN='^[^ ]*python3 ([^ ]*/)?programming[.]py( |$)'
+pgrep -af "$PROGRAMMING_PATTERN"
+sudo ss -Huanp | awk '$4 ~ /:8090$/ { print }'
+sudo fuser -v 8090/udp
+```
+
+Proceed only if no experiment controller is running, the route is the known
+internal Ethernet route, and exactly one `programming.py` PID matches the UDP
+8090 owner. Do not stop startup_manager, Legged_sport, appTransit or other
+Unitree services. With the starting posture still confirmed, run:
+
+```bash
+mapfile -t PROGRAMMING_PIDS < <(pgrep -f "$PROGRAMMING_PATTERN")
+if [ "${#PROGRAMMING_PIDS[@]}" -eq 1 ]; then
+  ps -fp "${PROGRAMMING_PIDS[0]}"
+  kill -TERM "${PROGRAMMING_PIDS[0]}"
+  sleep 2
+else
+  echo 'STOP: expected exactly one Programming Module PID'
+fi
+pgrep -af "$PROGRAMMING_PATTERN" || true
+sudo ss -Huanp | awk '$4 ~ /:8090$/ { print }'
+```
+
+Continue only if the module has stopped and no UDP 8090 owner remains. If it
+reappears, do not repeatedly kill it. Stop and use step 6 to restore/check it.
+The controller also checks that its UDP port can be bound before ARM.
+
+#### 4. Terminal A / Pi — launch one trial; connect GUI before starting motion
+
+```bash
+./build/go1_lowlevel_experiment --mode prone-engagement \
+  --prone-confirmed --remote-confirmed --local-port 8090 \
+  --log logs/prone_engagement_01.csv
+```
+
+If that filename already exists, do not overwrite an unarchived result. The
+program asks before replacement. For the first run it should not exist.
+Read the profile, then enter `ARM`. The program then prints:
+
+```text
+Support receiver ready; no motor packets sent yet. Open the Ubuntu GUI.
+With belly/all feet on floor and remote ready, press Enter here to begin:
+```
+
+**Leave A at this prompt. In Terminal C on Ubuntu, run:**
+
+```bash
+python3 -u experiment/operator_support_gate.py sender
+```
+
+The GUI should open. If it does not, do not press Enter in A. Cancel the
+waiting program with Ctrl-C then Enter if needed, and restore the module
+using step 6. No experiment motor packets are sent while it waits here.
+
+With the GUI visible, remote ready and starting contact reconfirmed, press
+Enter in A to begin. Return focus to the GUI without clicking its button yet.
+Keep Terminal A visible alongside it so its phase messages can be read.
+
+#### 5. Observe engagement, confirm contact, and let shutdown complete
+
+Expected normal sequence:
+
+```text
+PRONE_OBSERVE -> PRONE_ENGAGE -> PRONE_ENGAGE_HOLD -> PRONE_SETTLE
+-> PRONE_RELEASE -> PRONE_FINAL_DAMPING -> COMPLETE
+```
+
+At `CONFIRM CONTACT NOW`, click once **only if belly and all four feet remain
+supported and the trial looks normal**. Keep GUI focus for the 1.5-second
+pulse; switching away cancels it. The one-second dwell authorizes the full
+four-second release; there is no need to hold the button or click repeatedly.
+Watch the robot until the program reports completion and returns to the Pi
+shell. Full normal duration is roughly 12–17 seconds depending on confirmation.
+
+If there is unexpected lifting, slipping, leg motion, abnormal sound, lost
+contact, or uncertainty, use the known **L2+B** stop and keep clear. Do not
+click contact confirmation to make the program progress. Panic sends its
+final damping window and closes automatically. Emergency damping can allow
+settling; it is not a controlled return or a guarantee against damage.
+
+Single Ctrl-C is a normal cancellation request, **not immediate exit**.
+If the robot remains correctly supported, a fresh contact click can finish
+the cancellation release. If contact is uncertain, use L2+B instead.
+If `PRONE_SUPPORT_HOLD` appears, the program is still applying position
+control. A late contact click can recover a confirmation timeout, but does
+not recover every other fault. If a fresh click does not begin release after
+the one-second dwell, use L2+B and retain the failed run. Do not abandon the
+controller or close SSH while it is holding. Do not inject deliberate faults
+into this first physical trial; those checks have been done offline.
+
+#### 6. Terminal A / Pi — restore the module after the controller has exited
+
+Keep the robot floor-supported. Whether the run completed, failed, or was
+cancelled before starting, restore/check the module once the controller has
+closed:
+
+```bash
+if pgrep -f "$PROGRAMMING_PATTERN" >/dev/null; then
+  echo 'Programming Module already running; not starting a duplicate'
+else
+  (cd /home/pi/Unitree/autostart/programming && bash ./programming.sh)
+fi
+sleep 2
+pgrep -af "$PROGRAMMING_PATTERN"
+sudo ss -Huanp | awk '$4 ~ /:8090$/ { print }'
+ls -lh /home/pi/go1-prone-engagement/logs/prone_engagement_01.csv
+sha256sum /home/pi/go1-prone-engagement/logs/prone_engagement_01.csv
+```
+
+Expect one Programming Module process and its usual UDP 8090 connection.
+If restoration is abnormal, keep the robot prone and report it. Close the GUI
+with its window close button; stop Terminal B's tunnel with Ctrl-C.
+
+#### 7. Ubuntu — archive the one physical result and send it for review
+
+In Terminal C after the GUI closes:
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+mkdir -p logs/prone-engagement-hardware
+GO1_ENGAGEMENT_ARCHIVE=$(mktemp -d "$PWD/logs/prone-engagement-hardware/review-XXXXXXXX")
+scp pi@192.168.12.1:/home/pi/go1-prone-engagement/logs/prone_engagement_01.csv \
+  "$GO1_ENGAGEMENT_ARCHIVE/"
+sha256sum "$GO1_ENGAGEMENT_ARCHIVE/prone_engagement_01.csv"
+python3 experiment/analyze_lowlevel_log.py \
+  "$GO1_ENGAGEMENT_ARCHIVE/prone_engagement_01.csv"
+printf 'archive=%s\n' "$GO1_ENGAGEMENT_ARCHIVE"
+```
+
+Compare the SHA-256 with Terminal A. Retain the Pi original for now. If the
+program was cancelled before it started and no CSV exists, report that; do
+not analyze an old file as a new result. Send the console output, archive
+path, and observation of belly/four-foot contact throughout, movement/slip,
+sound, and final posture. Codex can review the local archive directly.
+
+The analyzer exiting 0 is not physical acceptance. Require the complete
+normal phase chain and final damping, no abort/watchdog, feedback >=450 Hz,
+p99 gap <=10 ms and maximum gap <=20 ms, observed support throughout, and
+no unexpected motion/sound. Review actual gains, total predicted effort,
+velocity, attitude, and any target/feedback mismatch. Failure to move toward
+the clamped calf target is not itself a failed engagement test. Do not infer
+contact force or torque-tracking bandwidth from this run. After review,
+decide whether engagement is repeatable before progressing to rise or torque.
 
 ### 2.2 Original Pi rehearsal — completed; reference only
 
