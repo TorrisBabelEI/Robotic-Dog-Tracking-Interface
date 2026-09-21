@@ -7,25 +7,19 @@ do not count as hardware acceptance.
 | Chapter | Experiment | Current status |
 | --- | --- | --- |
 | [1](#chapter-1--remote-preflight) | Communication and remote preflight | Reported passing run: `remote_preflight_fix_02.csv` |
-| [2](#chapter-2--ground-handover) | Standing takeover and 10-second hold | Torque software matrix passed; recovery implementation updated; physical entry/release review pending |
+| [2](#chapter-2--ground-handover) | Standing takeover and 10-second hold | Bounded prone entry/release accepted; active exit tests next; standing still locked |
 | [3](#chapter-3--squat-and-return) | Four-leg half-squat and return | Original dry-run completed and archived; hardware pending Chapter 2 |
 | [4](#chapter-4--single-leg-lift) | Weight transfer and one leg lift | Original dry-run completed and archived; hardware pending Chapter 3 |
 | [5](#chapter-5--four-leg-sequence) | Four sequential leg lifts | Original dry-run completed and archived; hardware pending Chapter 4 |
 
-**Current status (2026-09-20):** operator transport (2.1.11), the complete
-torque software matrix (2.1.14, 10/10 cases), and revised prone recovery
-(2.1.16) are accepted from the operator's supplied results. Retain
-`logs/torque-software/review-hr0uqdbk/` and
-`logs/prone-recovery-software/review-6nblyb66/`. No routine repetition is needed.
-Further local readiness work is complete in 2.1.17: nonideal release fixes,
-recovery regression, and Ubuntu SDK command-adapter checks passed. The Pi ARM SDK check in 2.1.17 is accepted. The operator confirmed belly
-and all four feet on the floor after factory L2+B. Local implementation,
-28/28 regressions, and engagement-only simulation passed (2.1.19). The next
-operator block is **2.1.19: one first powered engagement-and-release trial**.
-Only the new `prone-engagement` mode is released for this narrow trial;
-`prone-low-rise`, standing, squat and leg-lift hardware modes remain locked.
-Older blanket statements about all ground modes being locked predate this
-specific release and still apply to the older modes.
+**Current status (2026-09-21): bounded prone engagement and release accepted.**
+Section 2.1.30 records the successful `prone_engagement_03.csv` hardware result
+and operator confirmation. The settling defect is corrected; the initial
+watchdog flag occurred during damping-only observation, with none during
+engagement/release. Factory module restoration survived SSH logout.
+Next is the two-case hardware exit block in 2.1.31: single-Ctrl-C cancellation
+and L2+B stop at the same small gain. No rise, standing or torque waveform is
+released yet. Earlier aborted trials remain documented as historical evidence.
 
 The operator confirmed no support equipment and requested continued development
 without external lifting. Section 2.1.6 is closed; lack of a rig is not a
@@ -49,9 +43,9 @@ summaries are fully archived on Ubuntu. `handover-SB8m9xb7` and
 evidence of an overwritten download. No routine dry-run or preflight repetition
 is requested. The old rehearsal commands remain below as reference only.
 
-The new normal-exit state machine is a development fixture with synthetic
-support confirmation. Its target has not been calibrated to actual belly
-contact. Ground hardware modes now fail before ARM or UDP initialization;
+The prone-engagement normal exit has now been demonstrated with operator
+contact confirmation. Standing takeover and low-rise remain separate,
+unvalidated hardware transitions. Ground hardware modes now fail before ARM or UDP initialization;
 there is no command-line override. The hardware references in Chapters 2–5
 remain blocked pending endpoint and standing-takeover review.
 
@@ -2557,6 +2551,9 @@ transport check, or SDK test.
 
 ### 2.1.19 First powered engagement and release — complete operator block
 
+**HOLD after the first run:** see 2.1.20 before any repeat. The procedure below
+is retained for reference; it is not a request to rerun the failed trial.
+
 **This block sends motor commands.** The preceding adapter test did not.
 Perform one trial, archive its result, and stop for review before repeating or
 adding a rise/torque excitation. It is a first hardware validation, not a
@@ -2773,10 +2770,12 @@ with its window close button; stop Terminal B's tunnel with Ctrl-C.
 
 #### 7. Ubuntu — archive the one physical result and send it for review
 
-In Terminal C after the GUI closes:
+In Terminal C after the GUI closes (also activate this environment if using
+a new Terminal D):
 
 ```bash
 cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+conda activate dog_ctrl
 mkdir -p logs/prone-engagement-hardware
 GO1_ENGAGEMENT_ARCHIVE=$(mktemp -d "$PWD/logs/prone-engagement-hardware/review-XXXXXXXX")
 scp pi@192.168.12.1:/home/pi/go1-prone-engagement/logs/prone_engagement_01.csv \
@@ -2801,6 +2800,1204 @@ velocity, attitude, and any target/feedback mismatch. Failure to move toward
 the clamped calf target is not itself a failed engagement test. Do not infer
 contact force or torque-tracking bandwidth from this run. After review,
 decide whether engagement is repeatable before progressing to rise or torque.
+
+### 2.1.20 First hardware result — failed readiness, no engagement
+
+**Reviewed locally on 2026-09-21.** Archive:
+`logs/prone-engagement-hardware/review-fTXlbb7z/prone_engagement_01.csv`.
+SHA-256 `39dc7ddccab8f5b3b8f40d8fd3c4d824e7c139e6ed0a121c2f8aa338f45c72b6`
+matches the supplied Pi checksum and the local recomputation. Deployment was
+`logs/engagement-deployment/review-glwGHRK7/`; Pi binary SHA-256 was
+`e77ab13da7d5d3d2936a8acb429e6393e118852b317a1596703ebd9853bf6744`.
+
+Codex ran the analyzer in the existing project environment:
+
+```bash
+/home/aims/miniconda3/envs/dog_ctrl/bin/python3 -B \
+  experiment/analyze_lowlevel_log.py \
+  logs/prone-engagement-hardware/review-fTXlbb7z/prone_engagement_01.csv --no-plots
+```
+
+The analyzer succeeded and wrote its summary next to the CSV. The earlier
+NumPy error was from Terminal D using `base`; no installation or new download
+is required. Activating `dog_ctrl` is now explicit in the archive procedure.
+
+| Evidence | Result |
+| --- | --- |
+| Phase chain | `PRONE_OBSERVE -> PANIC_DAMPING -> COMPLETE`; no engagement phase |
+| Abort reason | `prone_observe_remote_not_valid_for_prone_mode`, first abort at sample 2501 |
+| Recorded samples / fresh states | 2,766 / 67 |
+| Fresh-state rate | 11.87 Hz |
+| p99 / maximum fresh gap | 146.356 / 172.155 ms |
+| Fresh remote validity | 0%; all logged remote headers, buttons and stick fields zero |
+| Low-level flag | All fresh states 255 |
+| All recorded joint commands | Kp=0, Kd=1, feed-forward torque=0 |
+| Maximum joint speed / temperature | 0.02724 rad/s / 56 C |
+| Watchdog cycles | 0; feedback tick gaps over 20 ms: 63 |
+
+The operator confirmed the remote was powered and connected, no movement was
+observed, and the sound was the usual one. Do not treat all-zero received
+remote fields as proof the remote was switched off. The previous accepted
+preflight has valid remote headers 85/81 and approximately 498 Hz feedback;
+this run is a materially different communication result. Its root cause is
+not established by these logs. A connected GUI does not validate robot/remote
+feedback.
+
+Terminal A proves the controller closed its UDP socket and returned to the
+shell before archiving. The Programming Module was restarted as PID 8590
+and reclaimed its expected UDP 8090 connection. The GUI subsequently wrote
+to a closed support receiver (`Broken pipe`); repeated Ctrl-C interrupted
+Tkinter. That GUI traceback did not cause the earlier observation abort.
+Close the GUI window and Terminal B tunnel now; no experiment remains active
+in the supplied transcript. No extra restoration or Pi-file deletion is needed.
+
+**Independent defect fixed locally:** the SDK returns successful send byte
+counts (614 for these low commands), while the core expects status 0. The
+hardware adapter now normalizes an exact SDK command-length result to 0,
+rejects missing/short/failed sends, and keeps raw byte counts in CSV logs.
+High-level send handling uses the corresponding SDK length constant too.
+This would affect later entry/final-damping checks; it is not an explanation
+for zero remote fields or this observation-stage abort. No validity/rate
+threshold was relaxed. New send-status/final-damping tests and the entire
+recovery block passed in `logs/prone-recovery-software/review-stuioqjd/`.
+The sender's startup wording now distinguishes the controller from the offline
+probe, and Ctrl-C requests orderly GUI closure instead of interrupting a Tk
+callback. Six existing pulse/lease tests passed; real GUI closure has not been
+retested on the operator's desktop. These changes have not been deployed to Pi.
+
+#### Next operator block — passive capture, no experiment controller
+
+Keep the restored factory processes running. This diagnostic only records
+existing traffic; it does not send control commands, stop services or require
+remote button presses. Keep the already-prone robot undisturbed. If the session
+has ended, report that rather than powering it solely on these instructions.
+Do not rerun `prone-engagement` or the original active preflight yet.
+
+In **Terminal A, the Pi shell**:
+
+```bash
+cd /home/pi/go1-prone-engagement
+pgrep -af 'Legged_sport|programming[.]py|go1_lowlevel_experiment|example_'
+sudo ss -Huanp
+```
+
+There must be no custom experiment or SDK example active. Preserve that output.
+Then capture a new, non-overwriting file:
+
+```bash
+if [ -e logs/feedback_diag_01.pcap ]; then
+  echo 'STOP: diagnostic file already exists; preserve it'
+else
+  sudo timeout -s INT 15 tcpdump -i eth0 -nn -s 0 -U \
+    -w /home/pi/go1-prone-engagement/logs/feedback_diag_01.pcap \
+    'udp and (port 8007 or port 8008 or port 8082 or port 8090)'
+fi
+sha256sum /home/pi/go1-prone-engagement/logs/feedback_diag_01.pcap
+```
+
+`timeout` normally ends this capture after 15 seconds (exit 124 can be normal).
+If tcpdump is unavailable, permission is denied, or capture fails, retain the
+error; do not install or launch a control program as a substitute.
+
+In **an Ubuntu terminal**:
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+mkdir -p logs/feedback-diagnostic
+GO1_FEEDBACK_REVIEW=$(mktemp -d "$PWD/logs/feedback-diagnostic/review-XXXXXXXX")
+scp pi@192.168.12.1:/home/pi/go1-prone-engagement/logs/feedback_diag_01.pcap \
+  "$GO1_FEEDBACK_REVIEW/"
+sha256sum "$GO1_FEEDBACK_REVIEW/feedback_diag_01.pcap"
+printf 'archive=%s\n' "$GO1_FEEDBACK_REVIEW"
+```
+
+Send the process/socket output, capture summary, and archive path. Codex will
+inspect the local packet capture and compare it with the prior factory capture;
+no manual simulation or analyzer run is requested. This capture observes the
+restored factory state, not the vanished experiment state, so it may narrow
+rather than fully explain the failure. Preserve the original hardware CSV.
+
+### 2.1.21 Passive diagnostic result and onboard cleanup preparation
+
+**Capture accepted, 2026-09-21.**
+`logs/feedback-diagnostic/review-IxwMnFeM/feedback_diag_01.pcap` matches the Pi
+SHA-256 `7d04559f8a26da35b5124ad36b0f80e1266a0c4cb7ba12ee1dd4442043cd7f46`.
+The reported tcpdump totals were 22,198 captured, 22,373 received by filter,
+and zero kernel drops. These are not identical counts; do not describe the
+capture as proving that every filtered packet was saved.
+
+Codex extended the decoder to accept Ethernet framing as well as the earlier
+Linux cooked framing. Three parser regression tests passed. It decoded all
+22,198 saved packets with valid profile CRCs. Commands used:
+
+```bash
+/home/aims/miniconda3/envs/dog_ctrl/bin/python3 -B \
+  experiment/decode_native_go1_pcap.py \
+  logs/feedback-diagnostic/review-IxwMnFeM/feedback_diag_01.pcap \
+  --out logs/feedback-diagnostic/review-IxwMnFeM/decoded
+/home/aims/miniconda3/envs/dog_ctrl/bin/python3 -B -m unittest discover \
+  -s test -p test_decode_native_go1_pcap.py -v
+```
+
+| Flow | Saved packets | Measured rate | Median / maximum capture gap |
+| --- | ---: | ---: | --- |
+| MCU 8007 -> Pi factory 8008 | 14,799 | 999.93 Hz | 1.000 / 2.647 ms |
+| Pi factory 8008 -> MCU 8007 | 7,399 | 499.93 Hz | 2.000 / 4.008 ms |
+
+Factory commands had Kp=0, Kd=2 and zero feed-forward torque for all 12 joints;
+feedback was quiet. This later restored-factory capture establishes healthy
+factory traffic, not healthy experiment-port feedback at the time of failure.
+Only these two flows appear in this eth0 capture; same-host traffic need not
+traverse that interface.
+
+The SDK `refineState` mapping confirms native bytes 759–798 are the 40-byte
+remote payload. All current factory states have that payload zeroed. Offline
+comparison found all 10,000 states in the older `native-prone.pcap` likewise
+zeroed, while all 39,859 states in `native-return.pcap` had nonzero payloads,
+including 85/81 headers and recorded button changes. Detailed counts are in
+`remote-review.json` and `previous-remote-review.json` beside this capture.
+Zero remote data is therefore context-dependent in the archived native stream;
+it does not prove the operator powered the remote off. Neither the remote
+availability issue nor the experiment's 12 Hz receive rate is resolved.
+Section 2.1.19 remains on hold. Do not stop factory control processes or bypass
+remote validation based on this capture.
+
+#### Cleanup scope
+
+Prepare cleanup without mixing it with another powered trial. The robot can
+remain off if the Pi is independently accessible; no motor controller or
+capture may be writing the target files during deletion. If Pi access is not
+available, defer this housekeeping rather than power the robot just to free space.
+
+| Onboard item | Plan |
+| --- | --- |
+| `/home/pi/go1-sdk-adapter-review-68mDJRKk` | Completed scratch code/build; archive and verify first, then consider exact removal |
+| `/home/pi/go1-prone-engagement/logs/prone_engagement_01.csv` | Already archived and hash-verified on Ubuntu; eligible for single-file cleanup after preview |
+| `/home/pi/go1-prone-engagement/logs/feedback_diag_01.pcap` | Already archived and hash-verified on Ubuntu; eligible for single-file cleanup after preview |
+| `/home/pi/go1-prone-engagement` code/build | Keep for fault investigation; log cleanup is not whole-directory removal |
+| `/home/pi/Robotic-Dog-Tracking-Interface` | Keep source, SDK and known controller builds; inventory older logs before selecting anything else |
+| `/home/pi/Unitree`, autostart, factory modules | Out of cleanup scope |
+
+No remote deletion has been performed by Codex.
+
+#### A. Ubuntu command — inventory and archive completed SDK scratch code
+
+Run on **Ubuntu**, not inside a Pi SSH shell:
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+conda activate dog_ctrl
+python3 -B experiment/prepare_go1_cleanup.py
+```
+
+This script contains SSH calls and may ask for the Pi password several times.
+It inventories the three exact project/scratch paths above and reports storage.
+If the known SDK scratch directory exists, it streams a tar backup to a unique
+`logs/pi-cleanup/review-*` directory on Ubuntu. It compares regular-file hashes
+and symlink metadata with a Pi manifest, then rechecks that the manifest did
+not change during backup. It never extracts tar contents and **never deletes
+anything**. A missing scratch directory is reported and skipped; a changed or
+invalid backup stops preparation. It does not automatically select similarly
+named unknown directories for removal.
+
+Send the printed archive path. Codex will review `inventory-before.json`,
+`inventory-after.json`, `plan.json`, and the verified backup before preparing
+any code-directory removal. This is inspection of the actual cleanup targets,
+not a reason to repeat an experiment. Backup verification tests cover matching,
+corrupted, missing and outside-path archive contents; three tests passed locally.
+
+#### B. Optional log cleanup — preview exact files from Ubuntu
+
+The single-file cleanup tool now permits the engagement log root as well as
+the original project log root. SSH password authentication is supported.
+Path, mismatch, preview and recheck guards passed five tests locally.
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+conda activate dog_ctrl
+python3 -B experiment/cleanup_verified_go1_file.py \
+  --pi-file /home/pi/go1-prone-engagement/logs/prone_engagement_01.csv \
+  --ubuntu-copy logs/prone-engagement-hardware/review-fTXlbb7z/prone_engagement_01.csv
+python3 -B experiment/cleanup_verified_go1_file.py \
+  --pi-file /home/pi/go1-prone-engagement/logs/feedback_diag_01.pcap \
+  --ubuntu-copy logs/feedback-diagnostic/review-IxwMnFeM/feedback_diag_01.pcap
+```
+
+These commands only preview deletion after computing matching hashes on both
+machines. If both previews show the correct paths and the files are no longer
+being written, repeat each exact command with `--execute` appended to delete
+only its Pi original. The tool rechecks the remote hash immediately before
+removal; the Ubuntu copies and analyses are retained. If a path is absent or a
+hash differs, stop and keep the evidence rather than using a wildcard or `rm -rf`.
+Log cleanup is optional and does not fix the controller communication issue.
+
+### 2.1.22 Reviewed onboard cleanup — exact execution commands
+
+**Preparation reviewed, 2026-09-21.** Archive:
+`logs/pi-cleanup/review-oyswg744/`. Codex independently verified all 83 regular
+files in `sdk-staging.tar.gz` against both Pi manifests. Backup SHA-256:
+`1688ceac0e0cdd1eeee6f9d63c24a8c22b8bbcc2c7aa0e3ebaf7285263baa61e`.
+The SDK staging directory was unchanged during backup. Its reported disk use
+was 848 KiB. The Pi reported 13,187,010,560 bytes free (about 12.3 GiB), so no
+emergency storage cleanup is needed.
+
+Both exact log previews also passed: the engagement CSV (3,482,646 bytes)
+and passive PCAP (17,965,674 bytes) match their retained Ubuntu archives.
+Nothing has been deleted by those previews or by Codex.
+
+The following block performs the reviewed cleanup. Run it from **Ubuntu**
+only after all experiment/capture/build processes have stopped. It does not
+stop factory services. It may ask for the Pi password for each command.
+Each command is independent: if one reports failure, retain its output and
+stop instead of continuing manually or substituting `rm -rf`.
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+conda activate dog_ctrl
+python3 -B experiment/cleanup_verified_go1_sdk.py \
+  --archive logs/pi-cleanup/review-oyswg744 --execute
+```
+
+This command is restricted to
+`/home/pi/go1-sdk-adapter-review-68mDJRKk`. It validates the local backup
+again, compares a fresh Pi manifest, checks for use by Pi-owned processes,
+and removes only individually verified files followed by empty directories.
+Changed/added files, a symlink root, active use or an inability to inspect a
+process stops cleanup. A failure partway through removal can leave a partially
+removed scratch tree; the complete Ubuntu archive is retained.
+
+The first execution stopped before deletion because `/proc/686/cwd` was
+permission-protected. The checker now retries protected process links using
+read-only `sudo -n readlink`; deletion still runs as `pi`. If noninteractive
+sudo is unavailable or inspection fails, cleanup stops without bypassing the
+check. Re-run the same Ubuntu command above; no new backup or Pi deployment
+is required. Errors now show a short explanation instead of the embedded SSH
+program. All 13 local cleanup regression tests passed, including protected
+process inspection, active SDK use, failed sudo inspection, backup integrity,
+and exact-file deletion safeguards.
+No Pi execution has been performed by Codex. An already-absent scratch root
+is reported without touching any other directory.
+
+After SDK cleanup succeeds, execute the two already-reviewed log removals:
+
+```bash
+python3 -B experiment/cleanup_verified_go1_file.py \
+  --pi-file /home/pi/go1-prone-engagement/logs/prone_engagement_01.csv \
+  --ubuntu-copy logs/prone-engagement-hardware/review-fTXlbb7z/prone_engagement_01.csv \
+  --execute
+python3 -B experiment/cleanup_verified_go1_file.py \
+  --pi-file /home/pi/go1-prone-engagement/logs/feedback_diag_01.pcap \
+  --ubuntu-copy logs/feedback-diagnostic/review-IxwMnFeM/feedback_diag_01.pcap \
+  --execute
+```
+
+Each file is rehashed on both machines and on the Pi immediately before
+removal. Ubuntu raw logs, decoded data and summaries remain. The current
+engagement code/build, original project, Unitree SDK in the working projects,
+and `/home/pi/Unitree` remain in place. No other adapter folders or older
+builds are selected. Send the completion output to record actual deletions;
+preparation alone is not cleanup completion. The communication investigation
+remains open, and 2.1.19 remains on hold regardless of cleanup outcome.
+
+### 2.1.23 Known remote input under factory control — next operator block
+
+Cleanup completion was reported by the operator. Further housekeeping is not
+required to continue. The failed engagement remains blocked by sparse feedback
+and unavailable remote input; no additional torque simulation is required now.
+
+**Purpose:** determine whether the factory state stream carries a deliberate
+L2+B press and release, rather than inferring remote availability from idle
+zeros. This is a 20-second passive capture with one prompted two-second button
+press. It does not start a custom controller, stop factory services, or change
+the robot's control mode through software. The operator uses the same factory
+L2+B command already used to make this robot prone.
+
+Run only with the robot already prone, belly and all four feet supported, remote
+powered and connected, sticks centered, and no custom controller running. If it
+is standing or its posture is uncertain, do not type READY. Keep clear of the
+joints; unexpected movement or sound means stop the test and report it.
+
+**Ubuntu terminal (includes SSH, capture, SCP, hash check and local analysis):**
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+conda activate dog_ctrl
+bash experiment/capture_go1_remote_input.sh
+```
+
+Type `READY` at the posture prompt. Enter SSH/sudo passwords when requested.
+After capture starts, leave the remote untouched for five seconds. At `NOW`,
+hold L2+B together; at `RELEASE`, release both buttons. Leave sticks centered
+throughout. No support GUI or separate SSH tunnel is needed. Allow capture and
+download to finish. If you miss the cues, report that; do not claim a successful
+input test. Recorded cue timestamps are prompts, not proof of button presses.
+
+The helper retains new Pi files in a unique `logs/remote-input-*` directory and
+archives them on Ubuntu under `logs/remote-input-diagnostic/review-*`. It records
+processes, socket owners, capture statistics, UTC cue times and checksums. The
+decoder reports remote headers, button counts and timed transitions, plus native
+feedback gaps and command fields. `l2_b_samples > 0` alone is insufficient:
+review the 5551 header and a press/release transition aligned with the prompts.
+
+**Local preparation verified:** shell syntax and all three packet-parser tests
+passed. The updated decoder reproduced zero remote payloads in all 14,799 states
+of `feedback_diag_01.pcap`; the prior `native-return.pcap` produced 39,859 valid
+5551 headers, 440 L2+B samples (mask 0x0220), and 13 header/button transition
+entries. Both full captures passed their existing CRC checks. The helper itself
+has not been executed on the Pi by Codex.
+
+Send the archive path, whether you followed the two cues, and any observed
+motion or unusual sound. Codex will perform the detailed offline review.
+If remote transitions appear, the next diagnostic targets the experiment's
+receive path with simultaneous packet/log evidence; factory-stream success
+alone does not authorize engagement. If remote remains zero, investigate the
+factory remote delivery path before any powered custom trial. Do not repeat
+2.1.19 or weaken its remote/rate checks.
+
+#### First attempt and corrected retry
+
+The operator's `review-zGNcnFI3` attempt printed tcpdump's listening message,
+then exited without either button prompt or download. Its Pi directory is
+`/home/pi/go1-prone-engagement/logs/remote-input-PnjnwYaB`; the local directory
+contains only that path record. Do not count this as a remote-input test.
+Existing Pi capture data is retained; the retry selects a new directory.
+
+The helper incorrectly used `kill -0` to check the background sudo process.
+A root-owned process can deny that signal-permission check while still running.
+The script now uses `ps -p` to inspect process existence without signaling it,
+and reports the child exit status on an early capture failure. The exit trap
+in the old script waited for capture completion, so its lack of prompts does
+not establish that tcpdump itself failed. Two local tests execute the actual
+remote Bash block with mocked commands: denied signal permission still reaches
+both prompts; early capture failure stops before prompting. Shell syntax passes.
+No Pi controller command was executed by Codex.
+
+The operator now reports that the remote may have been switched off before
+previous tests. Treat its earlier powered/connected status as uncertain. This
+could explain missing remote fields; it does not establish why experiment
+feedback was approximately 12 Hz. Keep the remote powered and connected for
+the entire corrected block. Re-run the same Ubuntu command in this section;
+no deployment, cleanup or additional software simulation is needed first.
+
+The shortest remaining path is: resolve communication and stop-input delivery;
+repeat the brief prone engagement/release; then prepare a bounded small-torque
+trial with its mechanical setup. More complex motion follows hardware evidence,
+not completion of another software checklist. A completion time cannot be
+promised until the communication fault is isolated.
+
+### 2.1.24 Remote input confirmed; synchronized damping-only feedback diagnostic
+
+**Factory remote input confirmed, 2026-09-21.** Archive
+`logs/remote-input-diagnostic/review-ixy7fnv2`, SHA-256
+`e194bd7031775e57caa6e641dcee63763a83341bc584f060d993b3653b10b233`.
+All 19,931 native states passed CRC and carried 5551 remote headers.
+Recorded input was neutral -> L2 -> L2+B -> L2 -> neutral; L2+B appeared
+in 1,401 samples, from 7.037 to 8.438 seconds after capture start. Input was
+later than the nominal five-second cue, but a complete press/release was
+captured. State rate was approximately 1,000 Hz, maximum gap 2.851 ms;
+9,966 commands arrived at approximately 500 Hz. All joints retained Kp=0,
+Kd=2, zero feed-forward torque. Peak measured speed was 0.03725 rad/s.
+There were zero kernel drops (29,897 saved, 29,943 received by filter).
+This is evidence of input delivery, not a test of a custom controller's stop
+response. The remote-off explanation for previous zero data is plausible;
+the earlier experiment-port feedback rate remains unverified.
+
+**Next block:** a single 15-second `remote-preflight` on UDP 8090 with packet
+capture spanning factory and experiment traffic. It actively sends Kp=0,
+Kd=1, zero feed-forward torque to all joints. This changes damping and can
+change joint loading. Keep belly and all feet floor-supported, remote on and
+connected, sticks centered and everyone clear. No standing/rise/torque test
+is authorized by this diagnostic. In this diagnostic mode L2+B is recorded,
+not used as an exit trigger; unexpected motion/sound means press Ctrl-C in
+Terminal A and allow final damping/exit. Do not start another trial.
+
+#### A. Ubuntu Terminal A — deploy the already-tested send-status correction
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+conda activate dog_ctrl
+bash experiment/prepare_go1_prone_engagement.sh
+ssh -t pi@192.168.12.1
+```
+
+The deployment must report PASS. Now in the **Pi shell**, inspect the owners:
+
+```bash
+cd /home/pi/go1-prone-engagement
+ip route get 192.168.123.10
+pgrep -af 'go1_lowlevel_experiment|example_|run_torque_tracking' || true
+PROGRAMMING_PATTERN='^[^ ]*python3 ([^ ]*/)?programming[.]py( |$)'
+pgrep -af "$PROGRAMMING_PATTERN"
+sudo ss -Huanp | awk '$4 ~ /:8090$/ { print }'
+sudo fuser -v 8090/udp
+```
+
+Require the established eth0 route via 192.168.123.161, no custom controller,
+and exactly one Programming Module whose PID owns 8090 connected to 8082.
+If these differ, stop and send the output. Leave Legged_sport running.
+Reconfirm the supported prone posture and factory L2+B damping before the
+following block. It stops only that one Programming Module, verifies the
+port is free, and launches the diagnostic to its arm prompt:
+
+```bash
+(
+  set -e
+  test ! -e logs/feedback_path_01.csv
+  test ! -e logs/feedback_path_01.pcap
+  mapfile -t PIDS < <(pgrep -f "$PROGRAMMING_PATTERN")
+  [ "${#PIDS[@]}" -eq 1 ] || { echo 'STOP: unexpected module count'; exit 1; }
+  kill -TERM "${PIDS[0]}"
+  sleep 2
+  if pgrep -f "$PROGRAMMING_PATTERN"; then
+    echo 'STOP: module returned; do not kill again'; exit 1
+  fi
+  python3 - <<'PY'
+import socket
+with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+    s.bind(('0.0.0.0',8090))
+print('FREE: UDP 8090')
+PY
+  ./build/go1_lowlevel_experiment --mode remote-preflight \
+    --local-port 8090 --prone-confirmed --duration-s 15 \
+    --log logs/feedback_path_01.csv
+)
+```
+
+**Wait at `ARM DAMPING`; do not arm until Terminal B says `listening`.**
+If this block fails/cancels after stopping the module, restore it using C below.
+No support GUI or loopback tunnel is used.
+
+#### B. Ubuntu Terminal B — simultaneous capture, then arm A
+
+```bash
+ssh -t pi@192.168.12.1 'bash -c '\''
+cd /home/pi/go1-prone-engagement || exit 1
+test ! -e logs/feedback_path_01.pcap || { echo "STOP: capture exists"; exit 1; }
+sudo timeout -s INT 60 tcpdump -i any -nn -s 0 -U \
+  -w logs/feedback_path_01.pcap \
+  "ip and udp and (port 8007 or port 8008 or port 8082 or port 8090)"
+status=$?
+if [ "$status" -ne 0 ] && [ "$status" -ne 124 ]; then exit "$status"; fi
+sudo chmod a+r logs/feedback_path_01.pcap
+sha256sum logs/feedback_path_01.pcap
+'\'''
+```
+
+Once tcpdump prints `listening`, return to Terminal A, type `ARM DAMPING`,
+and press Enter promptly (within 20 seconds). About five seconds into the run,
+hold L2+B together for two seconds, then release; keep sticks centered. The
+15-second controller exits automatically, possibly after final damping. Record
+its console output and any physical observation. Capture continues for 60
+seconds to include restoration; let it finish. Do not use the native factory
+only decoder on this multi-interface/multi-port capture.
+
+#### C. Ubuntu — restore immediately after controller exit using explicit SSH
+
+Once the controller has returned to the Pi shell, run this from **Ubuntu**,
+even if the trial reported a fault or you cancelled arming:
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+bash experiment/restore_go1_programming.sh
+```
+
+This helper explicitly connects to the Pi, defines its own nonempty process
+pattern, refuses an active experiment or duplicate modules, and starts only
+the known vendor wrapper if the module is absent. It does not kill a process.
+Require exactly one module and its PID owning the usual UDP 8090 -> 8082
+connection in the printed output. Preserve any failure output and keep the
+robot prone. Do not retry the controller or start engagement. Both the local
+helper and its embedded remote block passed Bash syntax checks; actual Pi
+restoration must be confirmed from operator output.
+
+#### D. Ubuntu — archive after A exits and B capture finishes
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+conda activate dog_ctrl
+mkdir -p logs/feedback-path
+GO1_PATH_REVIEW=$(mktemp -d "$PWD/logs/feedback-path/review-XXXXXXXX")
+scp pi@192.168.12.1:/home/pi/go1-prone-engagement/logs/feedback_path_01.csv \
+    pi@192.168.12.1:/home/pi/go1-prone-engagement/logs/feedback_path_01.pcap \
+    "$GO1_PATH_REVIEW/"
+sha256sum "$GO1_PATH_REVIEW"/feedback_path_01.*
+python3 -B experiment/analyze_lowlevel_log.py \
+  "$GO1_PATH_REVIEW/feedback_path_01.csv" --no-plots
+printf 'archive=%s\n' "$GO1_PATH_REVIEW"
+```
+
+Compare hashes with the two Pi outputs. Send the archive path, A's controller
+and restoration output, B's capture totals, and physical observations. Codex
+will compare native 8008 traffic, experiment 8090 traffic and CSV receive
+freshness during the same interval. If wire feedback is healthy but CSV remains
+slow, investigate the SDK/receive path; if wire feedback to 8090 is sparse,
+investigate delivery/competing destinations. Review remote press/release on
+8090 as well as state flags, gaps, sends and final damping. Neither an exit
+code nor the generic analyzer's PASS alone authorizes the engagement retry.
+
+### 2.1.25 Synchronized diagnostic result — restore Programming Module first
+
+Archive: `logs/feedback-path/review-7X0qmEAc`. The controller completed 7,511
+samples, closed UDP, and reported no fault. Deployment executable SHA-256:
+`4629d3cd50db3a457113f5ef46f5553846be863d9ac7219c51549fcf178d8ded`.
+PCAP SHA-256 matches the Pi output:
+`2d1b02e8e02051f731e99ee2e47f053c1fadbba1e49886c159c1e454695e773f`.
+Local CSV SHA-256:
+`1f8cb27db0d499079d1fae78af67f5a11894967fed002356bf246e9ba81b7c53`;
+the submitted transcript contains no Pi CSV hash comparison yet.
+
+Codex ran `analyze_lowlevel_log.py --no-plots` on this archive and saved the
+reproducible packet review in `review_capture.py` and `capture-review.json`
+inside it. Summary:
+
+| Measure | Result |
+| --- | --- |
+| CSV fresh states | 5,448; 359.25 Hz; p99 gap 4.942 ms; maximum gap 10.175 ms |
+| Remote validity / low-level validity | 100% of fresh samples; L2+B recorded |
+| Faults / watchdog events / fresh tick gaps >20 ms | None |
+| CSV command fields | All joints Kp=0, Kd=1, feed-forward torque=0 |
+| SDK send results | 614 bytes for all logged samples |
+| Experiment outgoing packets | Approximately 500 Hz; maximum gap 2.423 ms |
+| Wire feedback to experiment 8090 during command window | Approximately 581 Hz; maximum gap 3.226 ms |
+| CSV ticks absent from capture | 0 |
+| Maximum joint speed / temperature | 0.0371 rad/s / 55 C |
+
+All 92,539 saved packets passed the appropriate CRC check. Factory commands
+use the previously identified transformed CRC; experiment SDK commands use
+the standard SDK CRC. Applying the factory transform to experiment commands
+would falsely flag every packet. The capture reports 92,936 packets received
+by filter and zero kernel drops; these counts do not imply all were saved.
+Wire and CSV fresh rates measure different stages; their difference alone is
+not evidence of packet loss. The previous 12 Hz/170 ms-gap condition did not
+recur. Concurrent factory 8008 commands remain visible (about 458 Hz during
+this interval); this diagnostic does not prove exclusive motor command
+ownership and is not torque-tracking acceptance. Do not stop Legged_sport
+based on this observation.
+
+**Restoration was attempted in the wrong shell.** The second transcript shows
+`aims@aims-Precision-7780`, not `pi@raspberrypi`. An unset
+`PROGRAMMING_PATTERN` made `pgrep` match unrelated Ubuntu processes, producing
+the misleading message that the module was already running. The Pi module's
+restoration is therefore unconfirmed. Keep the robot prone. Run from Ubuntu:
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+bash experiment/restore_go1_programming.sh
+```
+
+Send the module PID and socket output. Require exactly one Programming Module
+and that PID owning UDP 8090 connected to 192.168.123.161:8082. The helper
+refuses to start it while the named custom controller remains active. No new
+controller trial is required to correct restoration. No remote restoration
+was performed by Codex. Physical motion/sound observations for this run were
+not provided; telemetry is not a substitute for those observations.
+
+### 2.1.26 One prone-engagement retry after recovered communication
+
+**Historical failed run; use 2.1.28 for the corrected retry.**
+
+**Restoration confirmed by operator, 2026-09-21:** Programming Module PID
+10316 owns 192.168.123.161:8090 -> 192.168.123.161:8082. The operator reports
+no movement or unusual sound in the preceding damping diagnostic. No further
+restoration or repeat preflight is required before this block.
+
+Offline review of all 25,264 concurrent factory command packets found Kp=0,
+feed-forward torque=0 and Kd in {0,2}; saved as
+`logs/feedback-path/review-7X0qmEAc/factory-command-review.json`. This establishes
+the observed neutral/damping fields, not firmware arbitration or exclusive
+ownership. Keep the factory services unchanged. Any later torque acceptance
+must account for this concurrent stream.
+
+The earlier blanket hold on repeating 2.1.19 is superseded **only for this
+single bounded retry**, using the newly deployed binary and recovered remote
+feedback. This does not authorize low-rise, standing or torque-sine modes.
+The engagement commands all joints with Kp<=1, Kd=1, zero feed-forward torque
+and fixed targets. Calf target clamping can move/load the robot. The controller
+must independently pass its unchanged quiet-feedback and remote checks before
+engaging; do not bypass a failed check. The 500-fresh-state observation may take
+longer than one second at the measured 359 Hz.
+
+Keep belly and all four feet supported, legs unobstructed, remote on and
+connected, sticks centered, and everyone clear. Set the already-prone robot
+to its established factory L2+B damping state, then release both buttons before
+starting. If posture/contact is uncertain, do not arm. No intentional fault
+injection in this first completed engagement trial.
+
+#### A. Ubuntu Terminal A — SSH, verify deployed binary and ownership
+
+```bash
+ssh -t pi@192.168.12.1
+```
+
+Now run in the **Pi shell**:
+
+```bash
+cd /home/pi/go1-prone-engagement
+printf '%s\n' '4629d3cd50db3a457113f5ef46f5553846be863d9ac7219c51549fcf178d8ded  build/go1_lowlevel_experiment' | sha256sum -c -
+ip route get 192.168.123.10
+pgrep -af 'go1_lowlevel_experiment|example_|run_torque_tracking' || true
+PROGRAMMING_PATTERN='^[^ ]*python3 ([^ ]*/)?programming[.]py( |$)'
+pgrep -af "$PROGRAMMING_PATTERN"
+sudo ss -Huanp | awk '$4 ~ /:8090$/ { print }'
+sudo fuser -v 8090/udp
+```
+
+Require binary `OK`, the known eth0 route, no custom controller, and one
+Programming Module whose PID owns the shown 8090 -> 8082 connection. PID may
+change; never reuse 10316 as a kill target. If any check differs, stop.
+
+#### B. Ubuntu Terminal B — keep the confirmation tunnel open
+
+```bash
+ssh -N -o ExitOnForwardFailure=yes \
+  -L 127.0.0.1:18092:127.0.0.1:18092 pi@192.168.12.1
+```
+
+Silence after authentication is normal. If the port is occupied, check the
+existing tunnel rather than launching another probe or killing unknown owners.
+
+#### C. Pi Terminal A — release the port and start exactly one trial
+
+With supported posture reconfirmed, run this in the same **Pi shell**:
+
+```bash
+(
+  set -e
+  test ! -e logs/prone_engagement_02.csv
+  PROGRAMMING_PATTERN='^[^ ]*python3 ([^ ]*/)?programming[.]py( |$)'
+  mapfile -t PIDS < <(pgrep -f "$PROGRAMMING_PATTERN")
+  [ "${#PIDS[@]}" -eq 1 ] || { echo 'STOP: unexpected module count'; exit 1; }
+  kill -TERM "${PIDS[0]}"
+  sleep 2
+  if pgrep -f "$PROGRAMMING_PATTERN"; then
+    echo 'STOP: module returned; do not kill again'; exit 1
+  fi
+  python3 - <<'PY'
+import socket
+with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+    s.bind(('0.0.0.0',8090))
+print('FREE: UDP 8090')
+PY
+  ./build/go1_lowlevel_experiment --mode prone-engagement \
+    --prone-confirmed --remote-confirmed --local-port 8090 \
+    --log logs/prone_engagement_02.csv
+)
+```
+
+Type `ARM`, then **wait at the second prompt** that says the support receiver
+is ready and no motor packets have been sent. If the block fails after stopping
+the Programming Module, restore it using E; do not automatically retry.
+
+#### D. Ubuntu Terminal C — GUI, then begin and confirm contact
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+conda activate dog_ctrl
+python3 -u experiment/operator_support_gate.py sender
+```
+
+After the GUI opens, with posture and remote readiness confirmed, press Enter
+in A to begin. Return focus to the GUI without clicking yet; keep A visible.
+Expected sequence:
+
+`PRONE_OBSERVE -> PRONE_ENGAGE -> PRONE_ENGAGE_HOLD -> PRONE_SETTLE -> PRONE_RELEASE -> PRONE_FINAL_DAMPING -> COMPLETE`.
+
+At **CONFIRM CONTACT NOW**, click once only if belly and all four feet remain
+supported and the robot looks/sounds normal. Keep GUI focus for the 1.5-second
+pulse. The one-second confirmed dwell authorizes the full release; do not
+repeatedly click. Normal duration is roughly 12–17 seconds, depending on
+observation and confirmation.
+
+Unexpected motion, lifting, slipping, lost contact or abnormal sound: use
+**L2+B** and keep clear; panic should finish its damping window and close.
+Do not click confirmation to force progress. Single Ctrl-C requests normal
+cancellation, not immediate exit. If `PRONE_SUPPORT_HOLD` appears, position
+control is still active. Only confirm if contact is genuinely supported; if
+uncertain or a fresh confirmation does not start release after its dwell, use
+L2+B. Do not close SSH or abandon a holding controller. Wait for UDP closure
+and return to the Pi shell before restoration. No second trial in this block.
+
+#### E. Ubuntu — restore and archive after controller exit
+
+Close the GUI; stop B's tunnel with Ctrl-C. In **Ubuntu Terminal C**:
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+conda activate dog_ctrl
+bash experiment/restore_go1_programming.sh
+```
+
+Require one module and its matching 8090 -> 8082 socket. If abnormal, keep the
+robot prone and report it. Then archive from **Ubuntu**:
+
+```bash
+mkdir -p logs/prone-engagement-hardware
+GO1_ENGAGEMENT_REVIEW=$(mktemp -d "$PWD/logs/prone-engagement-hardware/review-XXXXXXXX")
+ssh pi@192.168.12.1 'cd /home/pi/go1-prone-engagement/logs && sha256sum prone_engagement_02.csv' \
+  > "$GO1_ENGAGEMENT_REVIEW/pi.sha256"
+scp pi@192.168.12.1:/home/pi/go1-prone-engagement/logs/prone_engagement_02.csv \
+  "$GO1_ENGAGEMENT_REVIEW/"
+(cd "$GO1_ENGAGEMENT_REVIEW" && sha256sum -c pi.sha256)
+python3 -B experiment/analyze_lowlevel_log.py \
+  "$GO1_ENGAGEMENT_REVIEW/prone_engagement_02.csv" --no-plots
+printf 'archive=%s\n' "$GO1_ENGAGEMENT_REVIEW"
+```
+
+Send A's phase/completion output, restoration output, archive path and actual
+movement/sound observations. Review requires the full engagement/release chain,
+no faults, bounded effort/motion, valid feedback, and final damping. A general
+analyzer summary alone does not establish engagement acceptance. Do not
+proceed to a rise or torque waveform until this physical result is reviewed.
+
+### 2.1.27 Engagement retry failed — settling timer corrected offline
+
+Archive `logs/prone-engagement-hardware/review-XkFFPRcI` verified against the
+Pi SHA-256 `94e12643128df16538568305fd42d7f5353eb11262cf3d26f9e4f58472ea9555`.
+Restoration is confirmed: PID 8228 owns 8090 -> 8082. Operator hesitated about
+which control to use, then clicked; no unusual movement/sound was observed.
+GUI closure was orderly. The run is **not accepted**.
+
+The controller reached engagement at 1.004 s and engagement hold at 5.012 s.
+At 8.016 s it failed with `prone_engagement_not_settled`, returned, and entered
+fault support hold at 12.030 s. It never reached release. At 81.654 s a feedback
+gap triggered panic damping; completion followed at 82.156 s. These are distinct
+failures: the late feedback interruption did not cause the first settling fault.
+The long log was mostly fault hold, not a successful long-duration trial.
+
+**Confirmed software defect:** all joint position/speed settling conditions
+passed during the 1,501 hold cycles. Five cycles reused a still-live state;
+`updateProneStable` incorrectly reset its dwell for each. The longest fresh
+streak was 461 cycles, or 0.922 s, insufficient for the required second.
+The timer now preserves credit on non-fresh live cycles but adds no credit.
+Fresh unsettled samples reset it, and stale feedback still resets/triggers the
+existing guard. Position, speed, remote, effort, and 20 ms timeout limits are
+unchanged. Overall telemetry: 493.09 Hz fresh rate, 24.008 ms maximum gap, one
+watchdog cycle and one fresh tick gap above 20 ms. The isolated late scheduling/
+feedback interruption remains a real fault; this timer correction does not
+claim to fix it. The reported torque correlations are not tracking acceptance
+for a fixed-target engagement.
+
+**Prompt defect:** the old hardware loop printed CONFIRM CONTACT even for an
+unrecoverable fault. The new thread-safe status flag permits that prompt only
+for contact-recoverable states. Other settle/hold faults print FAULT HOLD and
+instruct L2+B for final damping/exit. A late click did not cause the initial
+failure and could not clear it. Do not wait in fault hold on the next run.
+
+A regression with intermittent feedback reproduced failure before the fix and
+passes afterward, including a fresh speed disturbance that must reset dwell.
+All ten core test groups and normal/cancel/remote-stop/watchdog recovery
+simulations passed in `logs/prone-recovery-software/review-1igs0jv_/`. Hardware
+source compilation with GO1_WITH_SDK also passed. No corrected binary has yet
+been deployed to the Pi by Codex. Detailed phase evidence is saved in
+`engagement-review.json` beside the hardware CSV.
+
+### 2.1.28 Corrected bounded engagement retry — new deployment required
+
+**Deployment completed; see 2.1.29 to restore the missing module before resuming. Do not redeploy for that guard failure.**
+
+This replaces 2.1.26 for execution; do not rerun the old Pi binary. One retry
+only, same Kp<=1, Kd=1, zero feed-forward torque and fixed targets; no rise or
+torque waveform. Concurrent factory traffic still limits torque acceptance.
+First run on **Ubuntu**:
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+conda activate dog_ctrl
+bash experiment/prepare_go1_prone_engagement.sh
+```
+
+Require deployment PASS and retain its binary hash. Then follow the complete
+terminal sequence below. No repeat simulation or damping-only preflight is
+needed. Log `prone_engagement_03.csv` must be new; preserve existing trials.
+
+Keep belly and all four feet supported, legs unobstructed, remote on and
+connected, sticks centered, and everyone clear. Set the already-prone robot
+to its established factory L2+B damping state, then release both buttons before
+starting. If posture/contact is uncertain, do not arm. No intentional fault
+injection in this first completed engagement trial.
+
+#### A. Ubuntu Terminal A — SSH, verify deployed binary and ownership
+
+```bash
+ssh -t pi@192.168.12.1
+```
+
+Now run in the **Pi shell**:
+
+```bash
+cd /home/pi/go1-prone-engagement
+sha256sum build/go1_lowlevel_experiment
+ip route get 192.168.123.10
+pgrep -af 'go1_lowlevel_experiment|example_|run_torque_tracking' || true
+PROGRAMMING_PATTERN='^[^ ]*python3 ([^ ]*/)?programming[.]py( |$)'
+pgrep -af "$PROGRAMMING_PATTERN"
+sudo ss -Huanp | awk '$4 ~ /:8090$/ { print }'
+sudo fuser -v 8090/udp
+```
+
+Require the binary hash to match the just-completed deployment output, the known eth0 route, no custom controller, and one
+Programming Module whose PID owns the shown 8090 -> 8082 connection. PID may
+change; never reuse 10316 as a kill target. If any check differs, stop.
+
+#### B. Ubuntu Terminal B — keep the confirmation tunnel open
+
+```bash
+ssh -N -o ExitOnForwardFailure=yes \
+  -L 127.0.0.1:18092:127.0.0.1:18092 pi@192.168.12.1
+```
+
+Silence after authentication is normal. If the port is occupied, check the
+existing tunnel rather than launching another probe or killing unknown owners.
+
+#### C. Pi Terminal A — release the port and start exactly one trial
+
+With supported posture reconfirmed, run this in the same **Pi shell**:
+
+```bash
+(
+  set -e
+  test ! -e logs/prone_engagement_03.csv
+  PROGRAMMING_PATTERN='^[^ ]*python3 ([^ ]*/)?programming[.]py( |$)'
+  mapfile -t PIDS < <(pgrep -f "$PROGRAMMING_PATTERN")
+  [ "${#PIDS[@]}" -eq 1 ] || { echo 'STOP: unexpected module count'; exit 1; }
+  kill -TERM "${PIDS[0]}"
+  sleep 2
+  if pgrep -f "$PROGRAMMING_PATTERN"; then
+    echo 'STOP: module returned; do not kill again'; exit 1
+  fi
+  python3 - <<'PY'
+import socket
+with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+    s.bind(('0.0.0.0',8090))
+print('FREE: UDP 8090')
+PY
+  ./build/go1_lowlevel_experiment --mode prone-engagement \
+    --prone-confirmed --remote-confirmed --local-port 8090 \
+    --log logs/prone_engagement_03.csv
+)
+```
+
+Type `ARM`, then **wait at the second prompt** that says the support receiver
+is ready and no motor packets have been sent. If the block fails after stopping
+the Programming Module, restore it using E; do not automatically retry.
+
+#### D. Ubuntu Terminal C — GUI, then begin and confirm contact
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+conda activate dog_ctrl
+python3 -u experiment/operator_support_gate.py sender
+```
+
+After the GUI opens, with posture and remote readiness confirmed, press Enter
+in A to begin. Return focus to the GUI without clicking yet; keep A visible.
+Expected sequence:
+
+`PRONE_OBSERVE -> PRONE_ENGAGE -> PRONE_ENGAGE_HOLD -> PRONE_SETTLE -> PRONE_RELEASE -> PRONE_FINAL_DAMPING -> COMPLETE`.
+
+At **CONFIRM CONTACT NOW**, click the GUI button labelled **Click once after visually confirming belly contact** once. This is a mouse click, not a keyboard key. Click only if belly and all four feet remain
+supported and the robot looks/sounds normal. Keep GUI focus for the 1.5-second
+pulse. The one-second confirmed dwell authorizes the full release; do not
+repeatedly click. Normal duration is roughly 12–17 seconds, depending on
+observation and confirmation.
+
+Unexpected motion, lifting, slipping, lost contact or abnormal sound: use
+**L2+B** and keep clear; panic should finish its damping window and close.
+Do not click confirmation to force progress. Single Ctrl-C requests normal
+cancellation, not immediate exit. If **FAULT HOLD** appears, the fault cannot be cleared by clicking: use L2+B and allow final damping/exit. If a recoverable `PRONE_SUPPORT_HOLD` appears, position
+control is still active. Only confirm if contact is genuinely supported; if
+uncertain or a fresh confirmation does not start release after its dwell, use
+L2+B. Do not close SSH or abandon a holding controller. Wait for UDP closure
+and return to the Pi shell before restoration. No second trial in this block.
+
+#### E. Ubuntu — restore and archive after controller exit
+
+Close the GUI; stop B's tunnel with Ctrl-C. In **Ubuntu Terminal C**:
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+conda activate dog_ctrl
+bash experiment/restore_go1_programming.sh
+```
+
+Require one module and its matching 8090 -> 8082 socket. If abnormal, keep the
+robot prone and report it. Then archive from **Ubuntu**:
+
+```bash
+mkdir -p logs/prone-engagement-hardware
+GO1_ENGAGEMENT_REVIEW=$(mktemp -d "$PWD/logs/prone-engagement-hardware/review-XXXXXXXX")
+ssh pi@192.168.12.1 'cd /home/pi/go1-prone-engagement/logs && sha256sum prone_engagement_03.csv' \
+  > "$GO1_ENGAGEMENT_REVIEW/pi.sha256"
+scp pi@192.168.12.1:/home/pi/go1-prone-engagement/logs/prone_engagement_03.csv \
+  "$GO1_ENGAGEMENT_REVIEW/"
+(cd "$GO1_ENGAGEMENT_REVIEW" && sha256sum -c pi.sha256)
+python3 -B experiment/analyze_lowlevel_log.py \
+  "$GO1_ENGAGEMENT_REVIEW/prone_engagement_03.csv" --no-plots
+printf 'archive=%s\n' "$GO1_ENGAGEMENT_REVIEW"
+```
+
+Send A's phase/completion output, restoration output, archive path and actual
+movement/sound observations. Review requires the full engagement/release chain,
+no faults, bounded effort/motion, valid feedback, and final damping. A general
+analyzer summary alone does not establish engagement acceptance. Do not
+proceed to a rise or torque waveform until this physical result is reviewed.
+
+### 2.1.29 Corrected binary deployed; launch blocked before arming
+
+Operator deployment `logs/engagement-deployment/review-YkzqfG0X` succeeded.
+The Pi binary hash matches the deployment output:
+`4fdb05d3a3fe003368aba54e27afd95f6792c63f5975b74227e3b7b75f9b9c1b`.
+The route and absence of custom controllers were checked. However,
+`programming.py` was absent and UDP 8090 had no reported owner. Both attempts
+stopped at the one-module guard, before TERM, UDP construction or ARM.
+No `prone_engagement_03` controller trial occurred. Do not bypass the guard
+or count this as a failed motor trial.
+
+The prior restoration proved PID/socket presence only inside the restoring
+SSH session. Its subsequent disappearance is consistent with terminal hangup,
+but the exact Pi exit cause is not established. The helper now starts the
+existing vendor wrapper with `nohup`, stdin from `/dev/null`, and stdout/stderr
+redirected to a unique Pi `programming-restore-*.log`. The factory wrapper and
+services are unchanged. It never restarts an already-present module or kills
+an unknown process.
+
+It verifies the exact module PID and expected 8090 -> 8082 socket, closes
+that SSH session, then uses a new read-only SSH session to require the **same
+PID and socket**. Failure in that second check stops without silently restarting
+anything. Local transcripts are retained under `logs/programming-restoration`.
+Four local tests passed: correct PID/socket, missing/changed PID, duplicate/
+wrong socket, and a harmless mock background child surviving shell exit plus
+SIGHUP. These are helper tests, not a claim of verified Pi persistence yet.
+
+Run from **Ubuntu** (a separate Ubuntu terminal if A remains in the Pi shell):
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+bash experiment/restore_go1_programming.sh
+```
+
+It may ask for the Pi password twice. Require the final line:
+
+```text
+programming_restoration=PASS; same PID and socket verified after SSH logout
+```
+
+If PASS appears, resume 2.1.28 at A's Pi ownership checks, then B–E. Keep the
+same new log `prone_engagement_03.csv`; neither blocked attempt started the
+controller. Do not rebuild/redeploy or repeat earlier simulations. Keep the
+robot supported and remote connected as required there. If either restoration
+check fails, send the concise output and restoration archive; do not launch
+another trial. This verifies persistence across the SSH session, not permanent
+service supervision.
+
+### 2.1.30 Normal prone engagement and release accepted
+
+**Accepted for this bounded profile, 2026-09-21.** The operator confirmed belly
+and all four feet remained supported, with no unexpected movement or unusual
+sound. The corrected binary completed the normal sequence. Programming Module
+PID 26678 and its expected socket were verified after SSH logout; archive
+`logs/programming-restoration/review-rdolry2W`.
+
+Hardware archive: `logs/prone-engagement-hardware/review-jl57lTcl`.
+The CSV matches the Pi SHA-256
+`783804de11170a8f1be771631889b14a80dba5b12c0109952ffa32d9165ded0d`.
+Offline checks and results are retained as `review_engagement.py` and
+`engagement-review.json` in that directory. No repeat normal trial is needed.
+
+| Check | Observed result |
+| --- | --- |
+| Sequence | Observe -> engage -> hold -> settle -> release -> final damping -> complete |
+| Total time / samples | 13.488 s to COMPLETE; 6,742 samples |
+| Engagement hold | Completed after 1.040 s, with intermittent feedback handled correctly |
+| Contact dwell | 1.00197 s before release; one authorization event |
+| Commands | Kp 0..1, Kd=1, feed-forward torque=0 on all joints |
+| Peak absolute predicted total command effort | 0.09394 Nm, below 0.10 Nm bound |
+| Release / final damping | Kp non-increasing throughout release, then zero through final damping |
+| Feedback | 472.27 fresh Hz; p99 gap 4.033 ms; max gap 9.993 ms; no >20 ms tick gap |
+| Remote / low-level validity | 100% of fresh samples |
+| Faults / sends | No abort/stop reasons; all recorded sends 614 bytes |
+| Motion | Max joint speed 0.0375 rad/s; roll/pitch excursions 0.0014/0.0033 rad |
+
+**The one watchdog flag is a startup event.** It is sample 0 in PRONE_OBSERVE,
+with every joint already Kp=0, Kd=1, tau_ff=0. The sender starts after waiting
+for the GUI; its initial publication timestamp precedes that wait, so its
+startup fallback is damping. There are no watchdog flags during engagement or
+release. Keep this fact in the record rather than describing the run as having
+zero flags or weakening any active watchdog checks.
+
+This validates the bounded entry/contact/release behavior. Predicted effort is
+not independently measured torque. The general analyzer's correlations, gains,
+and RMSE here do not establish torque tracking: this was a fixed-target trial
+with zero feed-forward waveform. The support geometry NaNs belong to standing/
+leg-lift analysis fields unused by this prone protocol; they are not substituted
+for the operator's contact assertion. L2+B_seen=0 is expected in a normal run.
+Remote stop under active engagement has not yet been tested. Previous packet
+captures still show concurrent factory commands, so exclusive authority and
+later torque acceptance remain separate questions.
+
+### 2.1.31 Two-case exit verification at the accepted engagement limits
+
+**Next operator block:** one ordinary cancellation, then one deliberate remote
+stop. Same deployed binary, Kp<=1 and zero feed-forward torque; no rise, no gain
+increase, no waveform and no rebuild. This tests actual exit commands while
+position control is active, beyond the earlier damping-only button decoding.
+Do not disconnect communications or inject a watchdog failure on hardware.
+
+Use the same supported-prone posture, remote ON/connected, centered sticks and
+clear joints. Begin each case in the established factory L2+B damping state,
+then release the buttons. No physical observation is inferred from the CSV.
+If contact changes or anything is abnormal, use the known L2+B stop and keep
+clear. Do not proceed to the second case if the first does not restore normally.
+
+#### A. Terminal setup — run these on Ubuntu
+
+Terminal A:
+
+```bash
+ssh -t pi@192.168.12.1
+```
+
+In the resulting **Pi shell**, select the first case and check the binary:
+
+```bash
+cd /home/pi/go1-prone-engagement
+GO1_EXIT_CASE=cancel
+printf '%s\n' '4fdb05d3a3fe003368aba54e27afd95f6792c63f5975b74227e3b7b75f9b9c1b  build/go1_lowlevel_experiment' | sha256sum -c -
+ip route get 192.168.123.10
+```
+
+Require the matching binary and established eth0/192.168.123.161 route.
+Terminal B on **Ubuntu** (reuse a healthy existing tunnel; do not duplicate it):
+
+```bash
+ssh -N -o ExitOnForwardFailure=yes \
+  -L 127.0.0.1:18092:127.0.0.1:18092 pi@192.168.12.1
+```
+
+#### B. Pi Terminal A — launch the selected case
+
+This complete block defines its own process pattern. It refuses missing or
+ambiguous module ownership and existing logs before stopping any process.
+
+```bash
+(
+  set -e
+  case "$GO1_EXIT_CASE" in cancel|remote_stop) ;; *) echo 'STOP: select cancel or remote_stop'; exit 1 ;; esac
+  GO1_CASE_LOG="logs/prone_${GO1_EXIT_CASE}_01.csv"
+  test ! -e "$GO1_CASE_LOG"
+  if pgrep -af '^([^ ]*/)?go1_lowlevel_experiment( |$)|^([^ ]*/)?example_[^ ]*( |$)'; then
+    echo 'STOP: controller/example already running'; exit 1
+  fi
+  PATTERN='^[^ ]*python3 ([^ ]*/)?programming[.]py( |$)'
+  mapfile -t PIDS < <(pgrep -f "$PATTERN")
+  [ "${#PIDS[@]}" -eq 1 ] || { echo 'STOP: expected one Programming Module'; exit 1; }
+  SOCKETS=$(sudo ss -Huanp)
+  OWNER=$(awk -v pid="${PIDS[0]}" '$4 ~ /:8090$/ && $5 == "192.168.123.161:8082" && index($0,"pid=" pid ",") {print}' <<< "$SOCKETS")
+  [ -n "$OWNER" ] || { echo 'STOP: unexpected port owner'; exit 1; }
+  printf '%s\n' "$OWNER"
+  kill -TERM "${PIDS[0]}"
+  sleep 2
+  if pgrep -f "$PATTERN"; then echo 'STOP: module returned; do not kill again'; exit 1; fi
+  python3 - <<'PY'
+import socket
+with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+    s.bind(('0.0.0.0',8090))
+print('FREE: UDP 8090')
+PY
+  ./build/go1_lowlevel_experiment --mode prone-engagement \
+    --prone-confirmed --remote-confirmed --local-port 8090 --log "$GO1_CASE_LOG"
+)
+```
+
+Type `ARM`, then leave A at the second Enter prompt. In **Ubuntu Terminal C**:
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+conda activate dog_ctrl
+python3 -u experiment/operator_support_gate.py sender
+```
+
+After the GUI opens, press Enter in A to start. Keep A and the GUI visible.
+Do the selected case below once; then restore/download using D even if it fails.
+
+#### C. Actions for the two cases
+
+**Case 1 — cancel.** About two seconds after `phase=PRONE_ENGAGE` appears,
+press **Ctrl-C once in Terminal A**. Do not double-press: that requests panic.
+Expect PRONE_RETURN, then PRONE_SETTLE. At CONFIRM CONTACT NOW, click the GUI
+button **Click once after visually confirming belly contact**, only with belly
+and all four feet still supported; keep GUI focus for its 1.5-second pulse.
+Expect release -> final damping -> complete and return to the shell. During
+cancellation the gain must not increase; the offline review will check it.
+If FAULT HOLD appears or contact is uncertain, use L2+B instead of clicking
+repeatedly. Record that as a failed cancellation case and do not start case 2.
+
+**Case 2 — remote_stop.** Only after case 1 completed/restored normally and was
+archived, set `GO1_EXIT_CASE=remote_stop` in the same **Pi Terminal A**, and
+repeat B (reopen the GUI in C). About two seconds into PRONE_ENGAGE, press
+**L2+B together** on the factory remote. Release once PANIC_DAMPING appears.
+Do not click GUI confirmation. Expect reason `remote_l2_b`, final damping and
+automatic exit after its roughly half-second window. A nonzero controller exit
+status is expected for this deliberately requested panic; unrelated reasons
+or failure to exit are not a pass. If no response occurs promptly, use two
+Ctrl-C presses within one second in A as the software fallback and report the
+remote-stop test as failed. Neither mechanism is a physical emergency stop.
+
+If either input was accidentally sent during observation, retain the log and
+report that; it does not test an exit from nonzero position gain. Do not keep
+repeating attempts to manufacture a passing result.
+
+#### D. Ubuntu Terminal C — restore and archive each case before continuing
+
+After the controller has closed UDP and returned to the Pi shell, close the
+GUI and run on **Ubuntu**:
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+conda activate dog_ctrl
+bash experiment/restore_go1_programming.sh
+```
+
+Require the post-logout PASS. Keep B's tunnel open between the two cases.
+For case 1 set this in **Ubuntu Terminal C** (the Pi variable does not carry
+into this shell):
+
+```bash
+GO1_EXIT_CASE=cancel
+```
+
+For case 2 use this instead:
+
+```bash
+GO1_EXIT_CASE=remote_stop
+```
+
+Then run the same archive block in **Ubuntu**:
+
+```bash
+(
+set -e
+case "$GO1_EXIT_CASE" in cancel|remote_stop) ;; *) echo 'Invalid case'; exit 1 ;; esac
+GO1_CASE_FILE="prone_${GO1_EXIT_CASE}_01.csv"
+mkdir -p logs/prone-exit-hardware
+GO1_EXIT_REVIEW=$(mktemp -d "$PWD/logs/prone-exit-hardware/review-XXXXXXXX")
+ssh pi@192.168.12.1 "cd /home/pi/go1-prone-engagement/logs && sha256sum $GO1_CASE_FILE" \
+  > "$GO1_EXIT_REVIEW/pi.sha256"
+scp "pi@192.168.12.1:/home/pi/go1-prone-engagement/logs/$GO1_CASE_FILE" "$GO1_EXIT_REVIEW/"
+(cd "$GO1_EXIT_REVIEW" && sha256sum -c pi.sha256)
+python3 -B experiment/analyze_lowlevel_log.py "$GO1_EXIT_REVIEW/$GO1_CASE_FILE" --no-plots
+printf 'case=%s archive=%s\n' "$GO1_EXIT_CASE" "$GO1_EXIT_REVIEW"
+)
+```
+
+Keep any failed-transfer log on the Pi and report the failure rather than
+launching another case. After both, close the GUI and B's tunnel. Send both
+archive paths, console phase/stop output, restoration PASS records and physical
+observations. Codex will check cancellation gain monotonicity, the remote chord
+on fresh valid feedback, immediate damping publication after detection,
+unchanged bounds and completion. CSV detection-to-command latency does not
+measure physical-button-to-motor latency. Neither test establishes torque
+tracking; the next torque profile and command-ownership review remain separate.
 
 ### 2.2 Original Pi rehearsal — completed; reference only
 

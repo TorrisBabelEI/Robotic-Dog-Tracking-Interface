@@ -439,6 +439,49 @@ void engagementOnly() {
           "explicit engagement hardware options were not accepted");
 }
 
+void intermittentSettling() {
+  Options options = proneOptions(); options.mode = ExperimentMode::ProneEngagement;
+  Fixture t(options);
+  bool released = false;
+  for (int cycle=0; cycle<10000 && !t.core.done(); ++cycle) {
+    bool support = t.core.phase()==Phase::ProneSettle && t.core.phaseElapsedS()>0.1;
+    released = released || t.core.phase()==Phase::ProneRelease;
+    t.tick(support, cycle%200!=199, true, 0, false, false);
+  }
+  require(t.core.done() && !t.core.failed() && released,
+          "occasional repeated feedback must not prevent confirmed engagement release");
+  t.damping();
+  Fixture disturbed(options); disturbed.reach(Phase::ProneEngageHold);
+  for(int i=0;i<400;++i) disturbed.tick();
+  disturbed.f.joint[0].dq=0.051F; disturbed.tick();
+  for(int i=0;i<400;++i) disturbed.tick();
+  require(disturbed.core.phase()==Phase::ProneEngageHold,
+          "fresh unsettled feedback must reset stability credit");
+  for(int i=0;i<110;++i) disturbed.tick();
+  require(disturbed.core.phase()==Phase::ProneSettle,
+          "new full stable dwell should permit settling");
+}
+
+void sdkSendConvention() {
+  require(sdkSendStatus(614,614)==0, "full SDK datagram must count as success");
+  for(int result : {-1,0,613,615})
+    require(sdkSendStatus(result,614)==-1, "incomplete/failed send must fail closed");
+  Fixture t;
+  t.reach(Phase::ProneSettle); t.tick(false);
+  for(int i=0;i<600;++i) t.tick(true);
+  for(int i=0;i<3000 && !t.core.done();++i)
+    t.tick(false,true,true,sdkSendStatus(614,614));
+  require(t.core.done() && !t.core.failed(), "successful byte-count sends must permit final damping exit");
+  Fixture failure;
+  failure.reach(Phase::ProneSettle); failure.tick(false);
+  for(int i=0;i<600;++i) failure.tick(true);
+  failure.reach(Phase::ProneFinalDamping);
+  failure.tick(false,true,true,sdkSendStatus(-1,614));
+  require(failure.core.phase()==Phase::PanicDamping &&
+          failure.core.faultReason()=="prone_final_damping_send_failed",
+          "failed final damping send must still panic");
+}
+
 void hardwareLock() {
   char program[] = "test";
   char mode[] = "--mode";
@@ -467,6 +510,8 @@ int main() {
       {"cancel, feedback, watchdog, remote and envelope faults",
        cancellationAndFaults},
       {"engagement-only stationary, cancel, timeout and speed", engagementOnly},
+      {"intermittent feedback and disturbed settling", intermittentSettling},
+      {"SDK byte-count send status and final damping", sdkSendConvention},
       {"hardware CLI rejected before UDP", hardwareLock}};
   for (const auto &test : cases) {
     try {

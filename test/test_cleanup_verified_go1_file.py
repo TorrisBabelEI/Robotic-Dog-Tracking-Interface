@@ -17,6 +17,16 @@ class CleanupPathTests(unittest.TestCase):
         path = "/home/pi/Robotic-Dog-Tracking-Interface/logs/dry-run/go1.csv"
         self.assertEqual(cleanup.validate_pi_path(path), path)
 
+    def test_engagement_log_allowed_but_code_and_prefix_siblings_rejected(self):
+        path = "/home/pi/go1-prone-engagement/logs/prone_engagement_01.csv"
+        self.assertEqual(cleanup.validate_pi_path(path), path)
+        for path in ("/home/pi/go1-prone-engagement/logs/",
+                     "/home/pi/go1-prone-engagement/logs/../build/file",
+                     "/home/pi/go1-prone-engagement/logs-old/a.csv",
+                     "/home/pi/go1-prone-engagement/build/go1_lowlevel_experiment"):
+            with self.assertRaises(ValueError):
+                cleanup.validate_pi_path(path)
+
     def test_broad_or_escaped_targets_are_rejected(self):
         for path in (
             "/home/pi/Robotic-Dog-Tracking-Interface/logs/",

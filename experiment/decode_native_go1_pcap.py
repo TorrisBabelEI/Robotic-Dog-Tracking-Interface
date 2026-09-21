@@ -43,8 +43,9 @@ def packets(path):
         header = stream.read(24)
         if len(header) != 24 or header[:4] != b'\xd4\xc3\xb2\xa1':
             raise ValueError('requires little-endian microsecond classic PCAP')
-        if struct.unpack_from('<I', header, 20)[0] != 113:
-            raise ValueError('requires Linux cooked v1 (DLT 113) capture')
+        linktype = struct.unpack_from('<I', header, 20)[0]
+        if linktype not in (1, 113):
+            raise ValueError('requires Ethernet (DLT 1) or Linux cooked v1 (DLT 113) capture')
         while record := stream.read(16):
             if len(record) != 16:
                 raise ValueError('truncated record header')
@@ -54,9 +55,10 @@ def packets(path):
             frame = stream.read(size)
             if len(frame) != size or size != original:
                 raise ValueError('truncated captured packet')
-            if len(frame) < 44 or frame[14:16] != b'\x08\x00':
+            offset = 14 if linktype == 1 else 16
+            if len(frame) < offset + 28 or frame[offset-2:offset] != b'\x08\x00':
                 raise ValueError('unexpected link protocol or short packet')
-            ip = frame[16:]
+            ip = frame[offset:]
             ihl = (ip[0] & 15) * 4
             if ip[0] >> 4 != 4 or ihl < 20 or ip[9] != 17:
                 raise ValueError('expected IPv4 UDP')
@@ -98,6 +100,9 @@ def decode(path, out):
             for i, name in enumerate(('roll','pitch','yaw')):
                 row[name] = struct.unpack_from('<f',payload,62 + i*4)[0]
             row['extension_hex'] = payload[807:].hex()
+            row['remote_head0'], row['remote_head1'], row['remote_buttons'] = struct.unpack_from('<BBH', payload, 759)
+            row['remote_nonzero'] = int(any(payload[759:799]))
+            row['remote_l2_b'] = int((row['remote_buttons'] & 0x220) == 0x220)
         for index, joint in enumerate(JOINTS):
             if kind == 'state':
                 offset = 75 + index*32
@@ -127,6 +132,19 @@ def decode(path, out):
                        'crc_matches':sum(r['sdk_crc_match'] for r in data)}
     states=rows['state']; commands=rows['command']
     ticks=[(b['tick_ms']-a['tick_ms'])%2**32 for a,b in zip(states,states[1:])]
+    summary['remote'] = {
+        'nonzero_samples': sum(r['remote_nonzero'] for r in states),
+        'header_counts': dict(collections.Counter(f"{r['remote_head0']:02x}{r['remote_head1']:02x}" for r in states)),
+        'button_counts': dict(collections.Counter(f"{r['remote_buttons']:04x}" for r in states)),
+        'l2_b_samples': sum(r['remote_l2_b'] for r in states),
+        'button_transitions': [
+            {'time_s': (r['pcap_time_us']-states[0]['pcap_time_us'])/1e6,
+             'buttons_hex': f"{r['remote_buttons']:04x}",
+             'header_hex': f"{r['remote_head0']:02x}{r['remote_head1']:02x}"}
+            for i, r in enumerate(states)
+            if i == 0 or r['remote_buttons'] != states[i-1]['remote_buttons']
+               or (r['remote_head0'], r['remote_head1']) != (states[i-1]['remote_head0'], states[i-1]['remote_head1'])],
+        'limitation': 'Factory stream observation only; does not validate experiment-port delivery or stop response.'}
     summary['state']['tick_gap_counts']=dict(collections.Counter(ticks))
     summary['state']['max_abs_dq']=max(abs(r[j+'_dq']) for r in states for j in JOINTS)
     summary['state']['max_temperature']=max(r[j+'_temperature'] for r in states for j in JOINTS)

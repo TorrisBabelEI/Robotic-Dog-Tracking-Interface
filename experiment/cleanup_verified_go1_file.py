@@ -16,18 +16,20 @@ import subprocess
 from pathlib import Path
 
 
-PI_LOG_ROOT = "/home/pi/Robotic-Dog-Tracking-Interface/logs/"
+PI_LOG_ROOTS = ("/home/pi/Robotic-Dog-Tracking-Interface/logs/",
+                "/home/pi/go1-prone-engagement/logs/")
 PI_PATH_PATTERN = re.compile(r"[A-Za-z0-9_./-]+\Z")
 HASH_PATTERN = re.compile(r"([0-9a-f]{64})  (.+)\Z")
 
 
 def validate_pi_path(path: str) -> str:
+    root = next((r for r in PI_LOG_ROOTS if path.startswith(r)), None)
     if (
-        not path.startswith(PI_LOG_ROOT)
+        root is None
         or not PI_PATH_PATTERN.fullmatch(path)
         or ".." in Path(path).parts
         or path.endswith("/")
-        or len(Path(path).parts) <= len(Path(PI_LOG_ROOT).parts)
+        or len(Path(path).parts) <= len(Path(root).parts)
     ):
         raise ValueError("Pi path must name one file beneath the exact project logs directory")
     return path
@@ -51,7 +53,7 @@ def sha256_file(path: Path) -> str:
 
 def ssh(command: str) -> str:
     result = subprocess.run(
-        ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
+        ["ssh", "-o", "ConnectTimeout=5",
          "pi@192.168.12.1", command],
         check=True, capture_output=True, text=True,
     )

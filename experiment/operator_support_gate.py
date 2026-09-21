@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import select
+import signal
 import socket
 import sys
 import time
@@ -173,7 +174,7 @@ def run_sender(port: int) -> int:
         connection.close()
         print(f"Cannot open support GUI: {error}", file=sys.stderr, flush=True)
         return 2
-    root.title("Offline prone-support input test")
+    root.title("Prone-support confirmation")
     root.geometry("520x240")
     sequence = 0
     pulse = ConfirmationPulse()
@@ -206,7 +207,16 @@ def run_sender(port: int) -> int:
             label.configure(text="NOT CONFIRMED", fg="red")
             send("R")
 
+    interrupt_requested = False
+
+    def interrupt(_signal, _frame) -> None:
+        nonlocal interrupt_requested
+        interrupt_requested = True
+
     def heartbeat() -> None:
+        if interrupt_requested:
+            close()
+            return
         pending = pulse.deadline_s is not None
         if pulse.active(time.monotonic()):
             send("H")
@@ -223,12 +233,14 @@ def run_sender(port: int) -> int:
     button.configure(command=confirm)
     root.bind("<FocusOut>", cancel)
     root.protocol("WM_DELETE_WINDOW", close)
+    previous_sigint = signal.signal(signal.SIGINT, interrupt)
     heartbeat()
-    print("Support GUI opened; keep the Pi probe and SSH tunnel running. "
-          "Click once in the GUI to test confirmation.", flush=True)
+    print("Support GUI opened; keep the receiver/controller and SSH tunnel running. "
+          "For a hardware trial, click only at CONFIRM CONTACT NOW after observing floor contact.", flush=True)
     try:
         root.mainloop()
     finally:
+        signal.signal(signal.SIGINT, previous_sigint)
         connection.close()
         print("Support sender closed.", flush=True)
     return 0

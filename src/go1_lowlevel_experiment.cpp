@@ -87,6 +87,11 @@ double smoothStep5Derivative(double x) {
   return 30.0 * x * x - 60.0 * x * x * x + 30.0 * x * x * x * x;
 }
 
+// The SDK returns bytes sent, whereas the core consumes 0=success/-1=failure.
+int sdkSendStatus(int bytesSent, int expectedBytes) {
+  return expectedBytes > 0 && bytesSent == expectedBytes ? 0 : -1;
+}
+
 enum class ExperimentMode {
   RemotePreflight, GroundHandover, Preflight, TorqueSine, TorqueSineGround,
   Squat, LegLift, LegLiftSequence, ProneLowRise, ProneEngagement
@@ -332,6 +337,11 @@ public:
   bool panicReached() const { return panicReached_.load(); }
   bool failed() const { return failed_; }
   const std::string &faultReason() const { return faultReason_; }
+  bool proneContactConfirmationAllowed() const {
+    return (phase_ == Phase::ProneSettle || phase_ == Phase::ProneSupportHold) &&
+        (stopSource_.empty() || stopSource_ == "ctrl_c" ||
+         stopSource_ == "prone_floor_support_not_confirmed");
+  }
   std::size_t logCount() const { return logs_.size(); }
   int activeLegIndex() const {
     return activeLegValid_ ? go1::legIndex(activeLeg_) : -1;
@@ -393,7 +403,7 @@ public:
   void forceHardFault(const std::string &reason, int64_t nowNs) {
     enterPanic(reason, nowNs);
   }
-  void amendLastLoggedCommand(const Command &command, bool watchdogActive) {
+  void amendLastLoggedCommand(const Command &command, bool watchdogActive, int rawSendResult) {
     if (logs_.empty()) return;
     auto &sample = logs_.back();
     sample.phase = phase_;
@@ -402,6 +412,7 @@ public:
     sample.stopRequestNs = stopRequestNs_;
     sample.dampingCommandNs = dampingCommandNs_;
     sample.command = command;
+    sample.sendResult = rawSendResult;
     sample.watchdogActive = watchdogActive;
     fillTauTotal(sample);
   }
@@ -958,6 +969,12 @@ private:
   bool updateProneStable(
       const Feedback &f, const std::array<float, kJointCount> &target,
       bool fresh, bool alive) {
+    // Reusing a live sample supplies no new stability evidence, but does
+    // not prove disturbed posture. Stale feedback still resets credit.
+    if (!fresh) {
+      if (!alive) proneStableS_ = 0.0;
+      return false;
+    }
     if (proneTargetSettled(f, target, fresh, alive))
       proneStableS_ += kControlDt;
     else
@@ -1908,9 +1925,12 @@ public:
       if (isProneMode(options_.mode) && phase != shownPhase) {
         shownPhase = phase;
         std::cout << "phase=" << phaseName(phase) << std::endl;
-        if (phase == Phase::ProneSettle || phase == Phase::ProneSupportHold)
+        if (reportedConfirmationAllowed_.load())
           std::cout << "CONFIRM CONTACT NOW: click once only if belly and all feet remain on floor. "
                        "If movement/contact is abnormal, use L2+B; do not confirm." << std::endl;
+        else if (phase == Phase::ProneSettle || phase == Phase::ProneSupportHold)
+          std::cout << "FAULT HOLD: contact confirmation cannot release this fault. "
+                       "Use L2+B for final damping and exit; keep clear." << std::endl;
       }
       if (core_.safeHoldReached() && !safeShown) {
         safeShown = true;
@@ -1962,7 +1982,8 @@ private:
     StandingPoseCapture capture;
     const int64_t deadline = steadyNowNs() + 3000000000LL;
     while (steadyNowNs() < deadline && gSignalCount == 0) {
-      if (highUdp.SetSend(command) < 0 || highUdp.Send() != 0) return false;
+      if (highUdp.SetSend(command) < 0 ||
+          sdkSendStatus(highUdp.Send(), HIGH_CMD_LENGTH) != 0) return false;
       const auto before = highUdp.udpState;
       const int result = highUdp.Recv();
       const auto after = highUdp.udpState;
@@ -2071,8 +2092,10 @@ private:
     core_.observeSignalCount(static_cast<int>(gSignalCount), now, f);
     const int64_t lastRecv = lastRecvNs_.load();
     const bool alive = hasState && lastRecv > 0 && now - lastRecv <= 20000000LL;
+    const int rawSendResult = sendResult_.load();
     Command command = core_.step(
-        f, hasState, fresh, alive, recvResult_.load(), sendResult_.load(),
+        f, hasState, fresh, alive, recvResult_.load(),
+        sdkSendStatus(rawSendResult, LOW_CMD_LENGTH),
         loopUs, now, watchdogActive_.load(),
         isProneMode(options_.mode) && supportServer_.active(now));
     copyCommand(command, &safetyPacket_);
@@ -2084,9 +2107,10 @@ private:
       }
     }
     command = convertCommand(safetyPacket_);
-    core_.amendLastLoggedCommand(command, watchdogActive_.load());
+    core_.amendLastLoggedCommand(command, watchdogActive_.load(), rawSendResult);
     { std::lock_guard<std::mutex> lock(commandMutex_); publishedCommand_ = command; }
     lastCommandPublishNs_.store(now);
+    reportedConfirmationAllowed_.store(core_.proneContactConfirmationAllowed());
     reportedPhase_.store(core_.phase());
     if (core_.done()) finished_.store(true);
   }
@@ -2105,6 +2129,7 @@ private:
   Feedback feedback_; Command publishedCommand_;
   std::mutex stateMutex_, commandMutex_;
   std::atomic<Phase> reportedPhase_{Phase::Disarmed};
+  std::atomic<bool> reportedConfirmationAllowed_{false};
   std::atomic<bool> hasState_{false}, watchdogActive_{false}, finished_{false};
   std::atomic<uint64_t> stateSequence_{0};
   std::atomic<int64_t> lastRecvNs_{0}, lastCommandPublishNs_{0};
