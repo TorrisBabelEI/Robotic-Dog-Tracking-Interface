@@ -4,6 +4,10 @@
  *********************************************************************/
 #include "go1_kinematics.hpp"
 #include "go1_log_file.hpp"
+#if defined(GO1_WITH_POLICY)
+#include "go1_policy_session.hpp"
+#include "go1_command_owner.hpp"
+#endif
 
 #include <algorithm>
 #include <array>
@@ -26,6 +30,10 @@
 
 #if defined(GO1_WITH_SDK)
 #include "go1_operator_support.hpp"
+#include "go1_sdk_transport.hpp"
+#if defined(GO1_WITH_POLICY)
+#include "go1_policy_runtime.hpp"
+#endif
 #include "unitree_legged_sdk/joystick.h"
 #include "unitree_legged_sdk/unitree_legged_sdk.h"
 #include <boost/bind/bind.hpp>
@@ -94,10 +102,10 @@ int sdkSendStatus(int bytesSent, int expectedBytes) {
 
 enum class ExperimentMode {
   RemotePreflight, GroundHandover, Preflight, TorqueSine, TorqueSineGround,
-  Squat, LegLift, LegLiftSequence, ProneLowRise, ProneEngagement
+  Squat, LegLift, LegLiftSequence, ProneLowRise, ProneEngagement, WalkingPolicy
 };
 enum class Phase {
-  Disarmed, RemotePreflight, Precheck, CapturePose, Baseline, Hold,
+  WalkingPolicy, Disarmed, RemotePreflight, Precheck, CapturePose, Baseline, Hold,
   GroundHandover, TorqueExcite, Squat, WeightShift, Lift, AirHold, Lower,
   ContactVerify, Recenter, InterLeg, Return, SafeHold, PanicDamping, Complete,
   ExitLower, ExitVerify, ExitHold, ExitDamping,
@@ -108,6 +116,7 @@ enum class Phase {
 
 const char *phaseName(Phase phase) {
   switch (phase) {
+  case Phase::WalkingPolicy: return "WALKING_POLICY";
   case Phase::Disarmed: return "DISARMED";
   case Phase::RemotePreflight: return "REMOTE_PREFLIGHT";
   case Phase::Precheck: return "PRECHECK";
@@ -149,6 +158,7 @@ const char *modeName(ExperimentMode mode) {
   switch (mode) {
   case ExperimentMode::RemotePreflight: return "remote-preflight";
   case ExperimentMode::GroundHandover: return "ground-handover";
+  case ExperimentMode::WalkingPolicy: return "walking-policy";
   case ExperimentMode::Preflight: return "preflight";
   case ExperimentMode::TorqueSine: return "torque-sine";
   case ExperimentMode::TorqueSineGround: return "torque-sine-ground";
@@ -167,7 +177,7 @@ bool isProneMode(ExperimentMode mode) {
   return mode == ExperimentMode::ProneLowRise || mode == ExperimentMode::ProneEngagement;
 }
 bool isGroundMode(ExperimentMode mode) {
-  return mode == ExperimentMode::GroundHandover ||
+  return mode == ExperimentMode::WalkingPolicy || mode == ExperimentMode::GroundHandover ||
          mode == ExperimentMode::TorqueSineGround ||
          mode == ExperimentMode::Squat || isLegMode(mode) ||
          isProneMode(mode);
@@ -330,6 +340,15 @@ public:
     logs_.reserve(static_cast<std::size_t>(100.0 / kControlDt));
     for (auto &samples : forceSamples_) samples.reserve(1100);
   }
+#if defined(GO1_WITH_POLICY)
+  go1::PolicySession& policySession() { return policySession_; }
+  void setPolicyEvidence(const go1::PolicyEvidence& evidence) {
+    policyEvidence_=evidence;
+    // Operator stop must apply during startup/hold, before policy engagement.
+    if(options_.mode==ExperimentMode::WalkingPolicy && evidence.stop && !failed_)
+      enterPanic("policy_operator_stop",evidence.nowNs);
+  }
+#endif
   Phase phase() const { return phase_; }
   double phaseElapsedS() const { return phaseElapsedS_; }
   bool done() const { return doneFlag_.load(); }
@@ -355,6 +374,27 @@ public:
     precheckQ_ = pose;
     precheckPoseCaptured_ = true;
   }
+#if defined(GO1_WITH_POLICY)
+  // Offline-only handover experiment: preserve the previous actuator torque
+  // using an equivalent position offset at the unchanged parent gains.
+  // This is deliberately unavailable to hardware and after startup begins.
+  bool seedOfflinePolicySupport(const std::array<float, kJointCount>& torque,
+                                const std::array<float, kJointCount>& velocity) {
+    if (!options_.dryRun || options_.mode != ExperimentMode::WalkingPolicy ||
+        phase_ != Phase::Disarmed || !precheckPoseCaptured_) return false;
+    std::array<float, kJointCount> bias{},feedforward{};
+    for (std::size_t i=0;i<kJointCount;++i) {
+      feedforward[i]=clampValue(torque[i],-1.0F,1.0F);
+      bias[i]=(torque[i]+1.5F*velocity[i]-feedforward[i])/20.0F;
+      const float target=precheckQ_[i]+bias[i];
+      if (!std::isfinite(bias[i]) || std::fabs(velocity[i])>0.05F ||
+          std::fabs(bias[i])>0.3F || target<kJointMin[i%3] || target>kJointMax[i%3])
+        return false;
+    }
+    offlineSupportBias_=bias;offlineSupportFeedforward_=feedforward;
+    return true;
+  }
+#endif
   Command seededGroundHoldCommand() const {
     return precheckPoseCaptured_ ? holdCommand(precheckQ_) : dampingCommand();
   }
@@ -693,7 +733,9 @@ public:
     case Phase::Hold:
       command = holdCommand(initialQ_);
       if (phaseElapsedS_ >= (isLegMode(options_.mode) ? 1.0 : 2.0)) {
-        if (options_.mode == ExperimentMode::GroundHandover)
+        if (options_.mode == ExperimentMode::WalkingPolicy)
+          transition(Phase::WalkingPolicy);
+        else if (options_.mode == ExperimentMode::GroundHandover)
           transition(Phase::GroundHandover);
         else if (options_.mode == ExperimentMode::Squat)
           transition(Phase::Squat);
@@ -701,6 +743,42 @@ public:
         else transition(Phase::TorqueExcite);
       }
       break;
+#if defined(GO1_WITH_POLICY)
+    case Phase::WalkingPolicy: {
+      policyEvidence_.nowNs=hostNs;
+      policySession_.tick(policyEvidence_);
+      // Bound policy authority from its first enabled session, including blend.
+      // Do not reset this deadline on a late reply or an enable re-press.
+      if (policySession_.running()) {
+        if (!policyTrialStartNs_) policyTrialStartNs_ = hostNs;
+        if (hostNs - policyTrialStartNs_ >=
+            static_cast<int64_t>(options_.durationS * 1e9)) {
+          enterPanic("policy_trial_duration_elapsed", hostNs);
+          command = dampingCommand();
+          break;
+        }
+      }
+      if (options_.dryRun && policySession_.running()) {
+        if (!offlinePolicyStartNs_) offlinePolicyStartNs_=hostNs;
+        offlineSupportBlend_=std::max(0.0,1.0-(hostNs-offlinePolicyStartNs_)/2e9);
+      }
+      if(!policySession_.fault().empty()) {
+        enterPanic(policySession_.fault(),hostNs);
+        command=dampingCommand();
+      } else {
+        const auto target=policySession_.target(hostNs);
+        std::array<float,kJointCount> q;
+        for(std::size_t i=0;i<kJointCount;++i)q[i]=static_cast<float>(target[i]);
+        command=holdCommand(q);
+      }
+      break;
+    }
+#else
+    case Phase::WalkingPolicy:
+      enterPanic("policy_development_disabled", hostNs);
+      command = dampingCommand();
+      break;
+#endif
     case Phase::GroundHandover:
       command = holdCommand(initialQ_);
       if (phaseElapsedS_ >= 10.0) beginReturn(feedback);
@@ -1120,6 +1198,10 @@ private:
           std::fabs(f.rpy[1] - initialRpy_[1]) > limit) {
         if (phase_ == Phase::ProneRelease)
           enterPanic("prone_release_attitude", nowNs);
+#if defined(GO1_WITH_POLICY)
+        else if (phase_ == Phase::Return || phase_ == Phase::SafeHold)
+          enterPanic("ground_attitude_during_recovery", nowNs);
+#endif
         else
           requestSoftStop("ground_attitude_soft_abort", f, nowNs);
       }
@@ -1263,6 +1345,14 @@ private:
     for (std::size_t i = 0; i < kJointCount; ++i) {
       c.joint[i].mode = kServoMode; c.joint[i].q = target[i];
       c.joint[i].dq = 0; c.joint[i].kp = kp; c.joint[i].kd = kd; c.joint[i].tauFf = 0;
+#if defined(GO1_WITH_POLICY)
+      if (options_.dryRun && options_.mode == ExperimentMode::WalkingPolicy &&
+          (phase_ == Phase::Disarmed || phase_ == Phase::Precheck ||
+           phase_ == Phase::CapturePose || phase_ == Phase::Hold))
+        c.joint[i].q += offlineSupportBias_[i];
+      if (options_.dryRun && options_.mode == ExperimentMode::WalkingPolicy)
+        c.joint[i].tauFf=offlineSupportFeedforward_[i]*offlineSupportBlend_;
+#endif
     }
     return c;
   }
@@ -1507,6 +1597,11 @@ private:
     beginReturn(f);
   }
   void enterPanic(const std::string &source, int64_t nowNs) {
+#if defined(GO1_WITH_POLICY)
+    // External faults (worker loss, watchdog, SDK guards) must cancel pending
+    // inference too, not only switch the motor command to damping.
+    if (options_.mode == ExperimentMode::WalkingPolicy) policySession_.stop(source);
+#endif
     if (phase_ == Phase::Complete || phase_ == Phase::PanicDamping) return;
     failed_ = true; faultReason_ = stopSource_ = source; stopRequestNs_ = nowNs;
     transition(Phase::PanicDamping); panicReached_.store(true);
@@ -1604,6 +1699,10 @@ private:
   }
 
   Options options_;
+#if defined(GO1_WITH_POLICY)
+  go1::PolicySession policySession_;
+  go1::PolicyEvidence policyEvidence_;
+#endif
   Phase phase_ = Phase::Disarmed;
   double phaseElapsedS_ = 0;
   int validPacketStreak_ = 0, invalidFeedbackStreak_ = 0;
@@ -1617,6 +1716,12 @@ private:
   int64_t panicExitRequestNs_ = 0;
   std::string faultReason_, stopSource_;
   std::atomic<bool> doneFlag_{false}, safeHoldReached_{false}, panicReached_{false};
+#if defined(GO1_WITH_POLICY)
+  std::array<float, kJointCount> offlineSupportBias_{},offlineSupportFeedforward_{};
+  int64_t offlinePolicyStartNs_=0;
+  int64_t policyTrialStartNs_=0;
+  double offlineSupportBlend_=1.;
+#endif
   std::array<float, kJointCount> precheckQ_{{0}}, initialQ_{{0}}, returnQ_{{0}};
   std::array<float, kJointCount> proneObserveReference_{{0}};
   std::array<double, kJointCount> proneObserveSum_{{0}};
@@ -1860,10 +1965,17 @@ Command convertCommand(const LowCmd &sdk) {
   }
   return command;
 }
+// Defense in depth: direct construction cannot bypass parseOptions' walking
+// lock and open an SDK socket. Future promotion needs a separate review.
+const Options& lockedHardwareOptions(const Options& options) {
+  if(options.mode==ExperimentMode::WalkingPolicy)
+    throw std::runtime_error("hardware walking policy remains locked before SDK construction");
+  return options;
+}
 class HardwareRunner {
 public:
   explicit HardwareRunner(const Options &options)
-      : options_(options), safety_(LeggedType::Go1),
+      : options_(lockedHardwareOptions(options)), safety_(LeggedType::Go1),
         udp_(LOWLEVEL, options.localPort, options.targetIp.c_str(), options.targetPort),
         core_(options),
         controlLoop_("go1_control", static_cast<float>(kControlDt),
@@ -1877,6 +1989,14 @@ public:
     lastCommandPublishNs_.store(steadyNowNs());
   }
   int run() {
+#if defined(GO1_WITH_POLICY)
+    if(options_.mode==ExperimentMode::WalkingPolicy) {
+      // No launch paths/evidence are provisioned in the locked release. A
+      // readiness failure must happen before any capture or motor threads.
+      try{policyRuntime_.start(policyLaunch_,policyQualification_);}
+      catch(const std::exception& e){std::cerr<<e.what()<<"; no motor sends started\n";return 3;}
+    }
+#endif
     if (requiresStandingCapture(options_.mode)) {
       std::array<float, kJointCount> standingPose{{0}};
       if (!captureStandingPoseHighLevel(&standingPose)) {
@@ -1955,6 +2075,12 @@ public:
     sendLoop_.shutdown();
     recvLoop_.shutdown();
     supportServer_.stop();
+#if defined(GO1_WITH_POLICY)
+    if(options_.mode==ExperimentMode::WalkingPolicy && !policyRuntime_.stop()) {
+      core_.forceHardFault("policy_worker_cleanup_failed",steadyNowNs());
+      core_.writeLog();return 3;
+    }
+#endif
     if (!core_.writeLog()) return 2;
     std::cout << "Hardware run complete: samples=" << core_.logCount()
               << ", log=" << options_.logPath << '\n';
@@ -1964,13 +2090,13 @@ private:
   bool captureStandingPoseHighLevel(
       std::array<float, kJointCount> *standingPose) {
     if (!standingPose) return false;
-    std::cout << "Capturing the standing pose through the high-level default-"
-                 "stand endpoint before low-level takeover...\n";
+    std::cout << "Requesting a stable pose through the high-level idle "
+                 "endpoint; standing posture must be established separately...\n";
     UDP highUdp(HIGHLEVEL, options_.highLocalPort,
                 options_.highTargetIp.c_str(), options_.highTargetPort);
     HighCmd command = {};
     highUdp.InitCmdData(command);
-    command.mode = 0;       // Idle/default stand; no walking command.
+    command.mode = 0;       // Active high-level idle request; NOT a stand command.
     command.gaitType = 0;
     command.speedLevel = 0;
     command.footRaiseHeight = 0.0F;
@@ -2017,9 +2143,12 @@ private:
     return false;
   }
   void recvStep() {
+    const auto before = go1::SdkReceiveCounters::snapshot(udp_.udpState);
     const int result = udp_.Recv();
-    recvResult_.store(result);
-    if (result < 0) return;
+    const auto after = go1::SdkReceiveCounters::snapshot(udp_.udpState);
+    const bool received = go1::validatedSdkReceive(result,before,after);
+    recvResult_.store(received ? result : -1);
+    if (!received) return; // Never restamp GetRecv's retained/CRC-invalid packet.
     LowState candidate = {}; udp_.GetRecv(candidate);
     if (!hasState_.load() || candidate.tick != recvThreadLastTick_) {
       recvThreadLastTick_ = candidate.tick;
@@ -2045,18 +2174,39 @@ private:
     const bool stale = published <= 0 || now - published > 20000000LL;
     if (stale) command = core_.emergencyDampingCommand();
     watchdogActive_.store(stale);
-    copyCommand(command, &sendPacket_); udp_.SetSend(sendPacket_);
-    sendResult_.store(udp_.Send());
+    copyCommand(command, &sendPacket_);
+    const int result=go1::stageAndSend(udp_, sendPacket_);
+    sendResult_.store(result);
+#if defined(GO1_WITH_POLICY)
+    // Acknowledge what this send thread actually selected (including watchdog
+    // damping), not the actor proposal or the control thread's pre-limit target.
+    { std::lock_guard<std::mutex> lock(sentAckMutex_);
+      sentAckCommand_=command; sentAckSuccess_=sdkSendStatus(result,LOW_CMD_LENGTH)==0;
+      ++sentAckSequence_; }
+#endif
+
   }
   void controlStep() {
-    const int64_t now = steadyNowNs();
-    const double loopUs = lastControlNs_ == 0 ? 2000.0 : (now - lastControlNs_) / 1000.0;
-    lastControlNs_ = now;
+#if defined(GO1_WITH_POLICY)
+    if(options_.mode==ExperimentMode::WalkingPolicy) {
+      std::lock_guard<std::mutex> lock(sentAckMutex_);
+      if(sentAckSequence_!=consumedSentAckSequence_) {
+        std::array<double,12> target; bool position=true;
+        for(std::size_t i=0;i<12;++i) {
+          const auto& j=sentAckCommand_.joint[i]; target[i]=j.q;
+          position=position && j.mode==kServoMode && j.kp>0 && j.q<1e8F;
+        }
+        core_.policySession().acknowledge(target,position,sentAckSuccess_);
+        consumedSentAckSequence_=sentAckSequence_;
+      }
+    }
+#endif
     Feedback f; LowState state = {};
     bool hasState = false;
     uint64_t sequence = 0;
+    int64_t lastRecv = 0;
     {
-      // Copy the packet and the sequence atomically with respect to recvStep()
+      // Copy the packet, sequence and arrival time atomically with respect to recvStep()
       // so recv_ok/fresh always describes the copied tick.
       std::lock_guard<std::mutex> lock(stateMutex_);
       hasState = hasState_.load(std::memory_order_relaxed);
@@ -2065,7 +2215,13 @@ private:
         state = lowState_;
       }
       sequence = stateSequence_.load(std::memory_order_relaxed);
+      lastRecv = lastRecvNs_.load(std::memory_order_relaxed);
     }
+    // Sample control time after acquisition snapshot, so a just-arrived packet
+    // cannot legitimately have an arrival timestamp newer than this tick.
+    const int64_t now = steadyNowNs();
+    const double loopUs = lastControlNs_ == 0 ? 2000.0 : (now - lastControlNs_) / 1000.0;
+    lastControlNs_ = now;
     const bool fresh = sequence != controlLastSequence_; controlLastSequence_ = sequence;
     if (options_.mode == ExperimentMode::RemotePreflight && fresh &&
         shouldPrintRemote(f, now)) {
@@ -2090,14 +2246,22 @@ private:
                 << recvResult_.load() << " damping_stream=active\n";
     }
     core_.observeSignalCount(static_cast<int>(gSignalCount), now, f);
-    const int64_t lastRecv = lastRecvNs_.load();
-    const bool alive = hasState && lastRecv > 0 && now - lastRecv <= 20000000LL;
+    const bool alive = hasState && lastRecv > 0 && now >= lastRecv &&
+                       now - lastRecv <= 20000000LL;
     const int rawSendResult = sendResult_.load();
+#if defined(GO1_WITH_POLICY)
+    if(options_.mode==ExperimentMode::WalkingPolicy)
+      policyRuntime_.before(core_,state,hasState,fresh,lastRecv,sequence,now,policyQualification_);
+#endif
     Command command = core_.step(
         f, hasState, fresh, alive, recvResult_.load(),
         sdkSendStatus(rawSendResult, LOW_CMD_LENGTH),
         loopUs, now, watchdogActive_.load(),
         isProneMode(options_.mode) && supportServer_.active(now));
+#if defined(GO1_WITH_POLICY)
+    if(options_.mode==ExperimentMode::WalkingPolicy && !policyRuntime_.after(core_,now))
+      command=core_.emergencyDampingCommand();
+#endif
     copyCommand(command, &safetyPacket_);
     safety_.PositionLimit(safetyPacket_);
     if (hasState) {
@@ -2125,9 +2289,20 @@ private:
   }
   Options options_; Safety safety_; UDP udp_; ExperimentCore core_;
   go1::OperatorSupportServer supportServer_;
+#if defined(GO1_WITH_POLICY)
+  go1::PolicyRuntime policyRuntime_;
+  go1::PolicyLaunchSpec policyLaunch_; // No runtime/CLI bypass of release lock.
+  go1::PolicyQualification policyQualification_; // All false until independently qualified.
+#endif
   LowCmd sendPacket_ = {}, safetyPacket_ = {}; LowState lowState_ = {};
   Feedback feedback_; Command publishedCommand_;
   std::mutex stateMutex_, commandMutex_;
+#if defined(GO1_WITH_POLICY)
+  std::mutex sentAckMutex_;
+  Command sentAckCommand_;
+  bool sentAckSuccess_=false;
+  uint64_t sentAckSequence_=0,consumedSentAckSequence_=0;
+#endif
   std::atomic<Phase> reportedPhase_{Phase::Disarmed};
   std::atomic<bool> reportedConfirmationAllowed_{false};
   std::atomic<bool> hasState_{false}, watchdogActive_{false}, finished_{false};
@@ -2198,6 +2373,7 @@ Options parseOptions(int argc, char **argv) {
       else if (v == "squat") o.mode = ExperimentMode::Squat;
       else if (v == "leg-lift") o.mode = ExperimentMode::LegLift;
       else if (v == "leg-lift-sequence") o.mode = ExperimentMode::LegLiftSequence;
+      else if (v == "walking-policy") o.mode = ExperimentMode::WalkingPolicy;
       else if (v == "prone-engagement") o.mode = ExperimentMode::ProneEngagement;
       else if (v == "prone-low-rise") o.mode = ExperimentMode::ProneLowRise;
       else throw std::runtime_error("Unknown mode: " + v);
@@ -2248,6 +2424,12 @@ Options parseOptions(int argc, char **argv) {
       !isProneMode(o.mode))
     throw std::runtime_error(
         "--prone-confirmed is only valid with remote-preflight or a prone mode");
+#if !defined(GO1_WITH_POLICY)
+  if (o.mode == ExperimentMode::WalkingPolicy)
+    throw std::runtime_error("walking-policy development is not included in this build; no UDP opened");
+#endif
+  if (!o.dryRun && o.mode == ExperimentMode::WalkingPolicy)
+    throw std::runtime_error("walking-policy is SDK-free/offline only: estimator, actuator profile and operator transport are not hardware-qualified; no UDP opened");
   if (!o.dryRun && (o.mode == ExperimentMode::RemotePreflight ||
                     isProneMode(o.mode)) &&
       !o.proneConfirmed)
@@ -2315,6 +2497,9 @@ int main(int argc, char **argv) {
         return 130;
       }
     }
+#if defined(GO1_WITH_POLICY)
+    go1::CommandOwner commandOwner;
+#endif
     HardwareRunner runner(options); return runner.run();
 #else
     std::cerr << "This build is dry-run-only. Rebuild on Ubuntu/Go1 for hardware access.\n";

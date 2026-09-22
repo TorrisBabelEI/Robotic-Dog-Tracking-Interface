@@ -12,20 +12,28 @@ do not count as hardware acceptance.
 | [4](#chapter-4--single-leg-lift) | Weight transfer and one leg lift | Original dry-run completed and archived; hardware pending Chapter 3 |
 | [5](#chapter-5--four-leg-sequence) | Four sequential leg lifts | Original dry-run completed and archived; hardware pending Chapter 4 |
 
-**Current status (2026-09-21): bounded prone engagement and release accepted.**
+**Current status (2026-09-22): bounded prone engagement and release accepted;
+selected Wenjian integrations pass Ubuntu verification.**
 Section 2.1.30 records the successful `prone_engagement_03.csv` hardware result
 and operator confirmation. The settling defect is corrected; the initial
 watchdog flag occurred during damping-only observation, with none during
 engagement/release. Factory module restoration survived SSH logout.
-Next is the two-case hardware exit block in 2.1.31: single-Ctrl-C cancellation
-and L2+B stop at the same small gain. No rise, standing or torque waveform is
+Next is the combined Pi build/check in 2.1.32, followed by the two-case hardware
+exit block in 2.1.31: single-Ctrl-C cancellation and L2+B stop at the same small
+gain. Normal engagement, old support probes, and completed simulation blocks
+do not need another operator run. No rise, standing or torque waveform is
 released yet. Earlier aborted trials remain documented as historical evidence.
 
-The operator confirmed no support equipment and requested continued development
-without external lifting. Section 2.1.6 is closed; lack of a rig is not a
+Earlier, the operator confirmed no support equipment and requested continued
+development without external lifting. Section 2.1.6 is closed; lack of a rig is not a
 project-wide stop condition. The old standing-handover executable remains
 locked because its transition and endpoint are still unvalidated. The new
 route is specified in 2.1.7; its first implementation gate is in 2.1.9.
+Wenjian's subsequent work describes belly support with feet airborne. That is
+a different posture: it does not satisfy this manual's grounded prone trial
+conditions or qualify the separate supported-hold controller. If that is the
+current setup, complete only the non-actuating build/check in 2.1.32 and defer
+2.1.31 until its grounded posture is established by the operator.
 Section 2.1.5 passed twice on Ubuntu: four checks, 1/1 test, and
 `test_exit=0` in both runs. Reports are `logs/capture-review-VrsaobOT/` and
 `logs/capture-review-l6xWpjfG/`. Retain either or both; no repeat is required.
@@ -3837,14 +3845,18 @@ later torque acceptance remain separate questions.
 
 ### 2.1.31 Two-case exit verification at the accepted engagement limits
 
-**Next operator block:** one ordinary cancellation, then one deliberate remote
-stop. Same deployed binary, Kp<=1 and zero feed-forward torque; no rise, no gain
-increase, no waveform and no rebuild. This tests actual exit commands while
-position control is active, beyond the earlier damping-only button decoding.
+**Next physical block, after the combined deployment/check in 2.1.32:** one
+ordinary cancellation, then one deliberate remote stop. The new binary includes
+the selected SDK checks; the profile remains Kp<=1 and zero feed-forward torque,
+with no rise, gain increase or waveform. Use this same binary for both cases;
+no rebuild between them. This tests actual exit commands while position control
+is active, beyond the earlier damping-only button decoding.
 Do not disconnect communications or inject a watchdog failure on hardware.
 
-Use the same supported-prone posture, remote ON/connected, centered sticks and
-clear joints. Begin each case in the established factory L2+B damping state,
+Use the same **belly and all four feet on the floor** posture, remote
+ON/connected, centered sticks and clear joints. Do not run this block with feet
+airborne on Wenjian's belly support. Begin each case in the established factory
+L2+B damping state,
 then release the buttons. No physical observation is inferred from the CSV.
 If contact changes or anything is abnormal, use the known L2+B stop and keep
 clear. Do not proceed to the second case if the first does not restore normally.
@@ -3862,11 +3874,15 @@ In the resulting **Pi shell**, select the first case and check the binary:
 ```bash
 cd /home/pi/go1-prone-engagement
 GO1_EXIT_CASE=cancel
-printf '%s\n' '4fdb05d3a3fe003368aba54e27afd95f6792c63f5975b74227e3b7b75f9b9c1b  build/go1_lowlevel_experiment' | sha256sum -c -
+sha256sum -c build/go1_lowlevel_experiment.sha256
+cat build/go1_lowlevel_experiment.sha256
 ip route get 192.168.123.10
 ```
 
-Require the matching binary and established eth0/192.168.123.161 route.
+Require `build/go1_lowlevel_experiment: OK`; the printed hash must match the
+just-completed 2.1.32 deployment transcript on Ubuntu. Require the established
+eth0/192.168.123.161 route. The old accepted normal-run hash remains historical
+evidence; it is not the identity of this newly built binary.
 Terminal B on **Ubuntu** (reuse a healthy existing tunnel; do not duplicate it):
 
 ```bash
@@ -3981,6 +3997,10 @@ case "$GO1_EXIT_CASE" in cancel|remote_stop) ;; *) echo 'Invalid case'; exit 1 ;
 GO1_CASE_FILE="prone_${GO1_EXIT_CASE}_01.csv"
 mkdir -p logs/prone-exit-hardware
 GO1_EXIT_REVIEW=$(mktemp -d "$PWD/logs/prone-exit-hardware/review-XXXXXXXX")
+scp pi@192.168.12.1:/home/pi/go1-prone-engagement/manifest.json \
+  pi@192.168.12.1:/home/pi/go1-prone-engagement/source.sha256 \
+  pi@192.168.12.1:/home/pi/go1-prone-engagement/build/go1_lowlevel_experiment.sha256 \
+  "$GO1_EXIT_REVIEW/"
 ssh pi@192.168.12.1 "cd /home/pi/go1-prone-engagement/logs && sha256sum $GO1_CASE_FILE" \
   > "$GO1_EXIT_REVIEW/pi.sha256"
 scp "pi@192.168.12.1:/home/pi/go1-prone-engagement/logs/$GO1_CASE_FILE" "$GO1_EXIT_REVIEW/"
@@ -3998,6 +4018,66 @@ on fresh valid feedback, immediate damping publication after detection,
 unchanged bounds and completion. CSV detection-to-command latency does not
 measure physical-button-to-motor latency. Neither test establishes torque
 tracking; the next torque profile and command-ownership review remain separate.
+
+### 2.1.32 Selected integration and reduced next-test sequence
+
+**Ubuntu completed, 2026-09-22.** The operator selected Wenjian items **1 + 3 +
+7**: SDK receive/send checks, offline factory commanded-effort analysis, and
+deployment/evidence packaging. Implementation, exact verification commands,
+results and limitations are in [the selected-integration report](GO1_SELECTED_INTEGRATION.md).
+Archive: `logs/integration-review/review-9HRx4VVD`. All 30 CTests and 14 Python
+tests passed (including two deployment-helper subcases with mocked SSH/rsync).
+The SDK command adapter also passed on Ubuntu without constructing UDP.
+No Pi connection or robot command was made for this integration.
+
+The supported-hold controller, factory process handover, timing-policy changes
+and walking-policy deployment were not selected. Existing policy development
+sources are preserved behind `GO1_ENABLE_POLICY_DEVELOPMENT=ON`; the selected
+bundle and both deployment helpers explicitly build with it OFF. Hardware
+walking remains locked even in the opt-in development build. These changes do
+not increase gains, torque caps or watchdog deadlines.
+
+| Work block | Do it now? |
+| --- | --- |
+| Old support probe, remote button decoding, torque matrix and recovery simulations | No; retain completed evidence. Changed code was checked locally. |
+| Normal prone engagement/release | No additional standalone run; 2.1.30 is accepted. Both pending exit cases exercise entry with the new binary. |
+| Another passive factory capture solely for effort analysis | No; both existing archives have been analyzed. Historical samples cannot seed a future live takeover. |
+| Standalone `run_go1_pi_adapter_check.sh` | Optional diagnostic only; the combined preparation below includes its checks. |
+| Combined Pi SDK checks and controller build | Once for this changed source; command below. |
+| Single-Ctrl-C and L2+B exits during active prone engagement | Still required once each, in 2.1.31, with the specified grounded posture. |
+| Hardware disconnect/watchdog injection, low-rise, standing, walking, torque waveform | Deferred; not released by these results. |
+
+**Next operator action — Ubuntu, one command block.** A Pi connection and ARM
+build require the operator. No GUI or support tunnel is needed for this step.
+Run between trials, with no custom controller executing:
+
+```bash
+cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+conda activate dog_ctrl
+bash experiment/prepare_go1_prone_engagement.sh
+```
+
+This freezes 38 selected source/SDK files and a manifest, transfers that
+snapshot, verifies checksums on the Pi, builds the two SDK tests and controller,
+and executes only the tests. It does not instantiate motor UDP in those tests,
+start a controller, or stop/restart the Programming Module. Both SDK library
+architectures are retained in the bundle; CMake selects the target architecture.
+It records the new binary SHA-256 on the Pi and in the Ubuntu build transcript.
+
+Require the source checksum checks, transport test and SDK adapter checks to
+pass, ending with:
+
+```text
+engagement_deployment=PASS; no controller started
+```
+
+Keep the printed `deployment_archive` under `logs/engagement-deployment/`.
+Then use 2.1.31 A–D for the two physical cases, only if its grounded posture
+holds. No repeat normal-engagement trial or separate SDK staging directory is
+needed. If the robot is currently supported with feet airborne, this preparation
+can finish but the prone cases remain deferred; it is not a supported-hold
+launch. Record each case's physical observation and restore the factory module
+as specified. A successful ARM build is not hardware torque-tracking acceptance.
 
 ### 2.2 Original Pi rehearsal — completed; reference only
 

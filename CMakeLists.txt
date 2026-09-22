@@ -18,6 +18,13 @@ endif()
 include_directories(externals/unitree_legged_sdk/include)
 link_directories(externals/unitree_legged_sdk/lib/cpp/${ARCH})
 
+# Existing policy/ownership work is preserved as an opt-in development build.
+# The selected torque verification/deployment path does not compile it.
+option(GO1_ENABLE_POLICY_DEVELOPMENT "Build unqualified offline policy integration" OFF)
+if(GO1_ENABLE_POLICY_DEVELOPMENT)
+  add_definitions(-DGO1_WITH_POLICY=1)
+endif()
+
 option(PYTHON_BUILD "build python wrapper" OFF)
 option(BUILD_SDK_EXAMPLES "build Unitree SDK example executables" OFF)
 if(PYTHON_BUILD)
@@ -84,6 +91,11 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+  add_executable(go1_sdk_transport_test test/go1_sdk_transport_test.cpp)
+  target_include_directories(go1_sdk_transport_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+  add_test(NAME go1_sdk_transport COMMAND go1_sdk_transport_test)
+  add_test(NAME go1_walking_hardware_rejected COMMAND go1_lowlevel_experiment --mode walking-policy)
+  set_tests_properties(go1_walking_hardware_rejected PROPERTIES WILL_FAIL TRUE)
   add_executable(go1_standing_capture_test test/go1_standing_capture_test.cpp)
   target_link_libraries(go1_standing_capture_test go1_kinematics)
   add_test(NAME go1_standing_capture COMMAND go1_standing_capture_test)
@@ -218,4 +230,23 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   install(DIRECTORY externals/unitree_legged_sdk/lib/cpp/${ARCH}/
     DESTINATION externals/unitree_legged_sdk/lib/unitree
     USE_SOURCE_PERMISSIONS)
+endif()
+
+if(GO1_ENABLE_POLICY_DEVELOPMENT)
+# SDK-free policy/parent integration. Hardware walking is rejected before UDP.
+add_library(go1_policy_offline_bridge SHARED src/go1_policy_offline_bridge.cpp)
+target_link_libraries(go1_policy_offline_bridge go1_kinematics -pthread)
+if(BUILD_TESTING)
+  add_executable(go1_policy_session_test test/go1_policy_session_test.cpp)
+  add_test(NAME go1_policy_session COMMAND go1_policy_session_test)
+  add_test(NAME go1_walking_policy_hardware_locked
+    COMMAND go1_lowlevel_experiment --mode walking-policy)
+  set_tests_properties(go1_walking_policy_hardware_locked PROPERTIES WILL_FAIL TRUE)
+endif()
+
+if(BUILD_TESTING)
+  add_executable(go1_policy_worker_test test/go1_policy_worker_test.cpp)
+  add_test(NAME go1_policy_worker_test COMMAND go1_policy_worker_test)
+endif()
+
 endif()
