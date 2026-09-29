@@ -12,7 +12,7 @@ commands were sent to the robot during this analysis.
 - PCAP SHA-256:
   `91271ff4c5bb79d85082a5c83d4d93e095157c21766c4fdd89b79d4e46991b8e`
 - Ubuntu archive:
-  `/home/aims/Yuxuan/Robotic-Dog-Tracking-Interface/logs/factory-observation/return-CxCtzXzf/`
+  `logs/factory-observation/return-CxCtzXzf/`
 - Capture report: 59,788 packets captured, 60,015 received by the filter,
   and zero kernel drops.
 
@@ -88,8 +88,9 @@ This confirms that the trunk was fully on the floor before the damping command,
 that no motion beyond settling flat was observed afterward, and that there was
 no sound. Slip and impact were not listed as separate events, and no abnormal
 event was reported. Combined with the independently verified telemetry, this
-completes the physical-observation gate in section 2.1.8. Do not repeat the
-robot motion merely to repair the archived text file.
+completes the physical-observation gate recorded in
+[former section 2.1.8](GO1_LOWLEVEL_2_1_HISTORY.md#218-factory-return-to-prone-and-damping--completed).
+Do not repeat the robot motion merely to repair the archived text file.
 
 ## Consequence for the next controller
 
@@ -99,5 +100,6 @@ therefore begins prone, engages bounded impedance gradually, requests a 5 mm
 symmetric rise, returns to its clamped engagement pose, requires continuous
 independent support observation, and releases stiffness gradually. The existing
 standing `ground-handover` path and the new path's hardware entry remain locked.
-Software and synthetic-support tests in section 2.1.9 come before any new
-hardware command.
+The associated software checks and subsequent bounded normal prone engagement
+are now complete; see [the current legacy status](GO1_LOWLEVEL_EXPERIMENT.md#21-retained-results-and-remaining-legacy-scope).
+This report adds no repeat test to [the separate walking procedure](GO1_WALKING_OPERATIONS.md).

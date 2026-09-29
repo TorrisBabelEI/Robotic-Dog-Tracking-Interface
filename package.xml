@@ -3,7 +3,7 @@
 <package format="2">
   <name>Robotic-Dog-Interface-AIMS-Lab</name>
   <version>0.0.0</version>
-  <description>The framework to implement Unitree Go1 robot for AIMS Lab.</description>
+  <description>Unitree Go1 body trajectory tracking, joint torque experiments, and offline analysis of supervised walking and motion-capture data.</description>
   <maintainer email="zhou1043@purdue.edu"></maintainer>
   <license>MIT</license>
   

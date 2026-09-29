@@ -5,4 +5,38 @@ experiment/src/__pycache__
 externals/unitree_legged_sdk/lib/python/amd64/**
 .DS_Store
 /logs/
-/Wenjian_test_walking_policy/
+/*_test_walking_policy/
+
+# Workstation/deployment path bindings stay local.
+/.go1-paths.env
+
+# Generated Python bytecode can embed absolute workstation paths.
+__pycache__/
+*.py[cod]
+
+# Raw trajectory references and recorded outputs stay local.
+# Source, documentation, configuration and small test fixtures remain visible.
+/experiment/traj/**/*.csv
+/experiment/traj/**/*.pkl
+/experiment/traj/**/*.npy
+/experiment/traj/**/*.npz
+/experiment/traj/**/*.png
+/experiment/traj/**/*.jpg
+/experiment/traj/**/*.jpeg
+/experiment/traj/**/*.pdf
+/experiment/traj/**/*.mp4
+/experiment/traj/**/*.mov
+/experiment/traj/**/*.pcap
+/experiment/traj/**/*.jsonl
+/experiment/traj/**/*.log
+/archive/*/data/
+
+# Legacy top-level simulator/experiment outputs.
+/controlData.csv
+/squat_*.csv
+/*.pcap
+/*.jsonl
+/*.log
+
+# macOS resource-fork sidecars are not experiment data.
+._*

@@ -1,10 +1,13 @@
-# Selected Wenjian integration — 2026-09-22
+# Selected walking-package integration — 2026-09-22
+
+Path notation and workstation setup: [local paths](GO1_LOCAL_PATHS.md).
 
 The operator selected items **1 + 3 + 7**. Their implementation and local
-verification are complete. The next operator action is the combined Pi build
-and SDK check in [manual section 2.1.32](GO1_LOWLEVEL_EXPERIMENT.md#2132-selected-integration-and-reduced-next-test-sequence),
-then only the two pending grounded exit cases in 2.1.31. Completed normal
-engagement and simulation blocks are retained without another operator run.
+verification are complete. This report records the legacy-controller integration;
+its proposed Pi build and two grounded exit cases are deferred unless that
+controller is resumed. See [the condensed status](GO1_LOWLEVEL_EXPERIMENT.md#21-retained-results-and-remaining-legacy-scope).
+For current hardware work, use [the separate walking procedure](GO1_WALKING_OPERATIONS.md).
+Completed normal engagement and simulation blocks need no routine repeat.
 
 ## Scope and provenance
 
@@ -14,12 +17,12 @@ engagement and simulation blocks are retained without another operator run.
 | 3 — Factory effort analysis | `experiment/review_factory_effort.py` pairs archived factory commands with past feedback from the matching endpoint and computes Kp×position error + Kd×velocity error + feed-forward torque. Both native CRC profiles are explicit; invalid frames, non-servo modes, active sentinels and missing/stale/future pairs are rejected. |
 | 7 — Deployment evidence | `experiment/prepare_go1_bundle.py` snapshots an explicit source list, SDK headers/libraries, tests, per-file hashes and scope manifest. Both Pi helpers transfer the frozen snapshot and verify it before building. The main preparation includes the SDK tests and retains the built binary hash. |
 
-Sources reviewed include `Wenjian_test_walking_policy/deployment/review_factory_effort.py`,
+Sources reviewed include `${GO1_POLICY_SOURCE}/deployment/review_factory_effort.py`,
 its tests, `SUPPORTED_HOLD_PROGRESS.md`, `STAGED_HARDWARE_INTEGRATION.md`, and
 `COMPUTE_RELEASE_REVIEW.md`, plus SDK receive changes already present in the
 parent workspace. The decoder is adapted to the parent's packet reader and
 adds endpoint isolation, explicit CRC selection and bounded past-state pairing.
-The ignored Wenjian directory remains intact.
+The reviewed source directory was left intact; its current location is `${GO1_POLICY_SOURCE}`.
 
 Other uncommitted policy integration was present before this selection. It is
 preserved behind the OFF-by-default CMake option
@@ -65,7 +68,7 @@ Reproduction commands for future changed-source review (already completed;
 not another operator gate):
 
 ```bash
-cd ~/Yuxuan/Robotic-Dog-Tracking-Interface
+cd "$(git rev-parse --show-toplevel)"
 conda activate dog_ctrl
 GO1_REVIEW=$(mktemp -d "$PWD/logs/integration-review/review-XXXXXXXX")
 python3 -B experiment/prepare_go1_bundle.py --out "$GO1_REVIEW/source"
@@ -90,23 +93,24 @@ effort estimates, not physical torque measurements or fresh takeover seeds.
 | Capture | Accepted pairs | Maximum pair age | Maximum absolute effort among accepted pairs |
 | --- | --- | --- | --- |
 | Parent `logs/feedback-path/review-7X0qmEAc/feedback_path_01.pcap` | 18,328 / 25,264 commands | 2.268 ms | 0.077763 Nm |
-| Wenjian `deployment/logs/supported_hold_boot_6782cf88/paired.pcap` | 2,470 / 2,470 commands | 2.463 ms | 0.903043 Nm |
+| Policy project `deployment/logs/supported_hold_boot_6782cf88/paired.pcap` | 2,470 / 2,470 commands | 2.463 ms | 0.903043 Nm |
 
 Parent source SHA-256:
 `2d1b02e8e02051f731e99ee2e47f053c1fadbba1e49886c159c1e454695e773f`.
-Wenjian source SHA-256:
+Policy-project source SHA-256:
 `fe7c69321bda23fad20a2d0a6c4be876e1f28737370cd5a7a548c389d004b0e7`.
 The parent capture excludes 6,536 non-servo pairs, 392 without recent past
 feedback, and 8 invalid native headers, and records 3 timestamp inversions.
 Its maximum is over accepted pairs, not the entire physical trial. Different
 postures and capture conditions preclude interpreting the two maxima as a
 tracking comparison. These analyses do not resolve concurrent factory/custom
-command ownership or actuator response. Wenjian's capture also had one kernel
+command ownership or actuator response. The policy-project capture also had one kernel
 capture drop according to its accompanying report.
 
-Results are in `factory-effort/` and `wenjian-effort-final/` within the integration
-archive. Each contains a source hash, summary, rejected-frame accounting and
-per-pair effort JSONL. For a later capture, run this offline command with a new
+Results are in `factory-effort/` and the policy-project comparison subdirectory
+within the integration archive; identify the latter by its source hash above.
+Each contains a source hash, summary, rejected-frame accounting and per-pair
+effort JSONL. For a later capture, run this offline command with a new
 output directory:
 
 ```bash

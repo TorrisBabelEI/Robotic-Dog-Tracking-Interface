@@ -9,7 +9,7 @@ the actual posture. No commands were sent during decoding.
 
 - SHA-256: `a1d5d005c33a2aae89e36d5beb906735112cda483e4c1d109cd033f966212ff3`
 - Pi archive: `/home/pi/Robotic-Dog-Tracking-Interface/logs/native-observe-P56RnBAT/`
-- Ubuntu archive: `/home/aims/Yuxuan/Robotic-Dog-Tracking-Interface/logs/factory-observation/standing-CCwLT0uH/`
+- Ubuntu archive: `logs/factory-observation/standing-CCwLT0uH/`
 - Operator capture output: 15,000 packets captured; 77 kernel drops; exit 0.
   The packet cap ended acquisition before the requested 15 seconds.
 
@@ -97,7 +97,6 @@ commands, gains, or selecting a custom torque limit.
 
 The standing baseline is accepted for offline observation. It does not resolve
 the prone calf command-limit conflict, establish a floor endpoint, or validate
-custom-controller takeover. The next useful observation is the factory return
-to prone followed by damping (experiment 2.1.8). This will show the command and
-feedback changes near the floor, without external lifting or a custom motor
-command. There is no need to repeat this standing capture.
+custom-controller takeover. The subsequent factory return-to-prone/damping
+observation is also complete; see [its analysis](GO1_NATIVE_RETURN_ANALYSIS.md).
+Neither capture needs repeating for [the current walking procedure](GO1_WALKING_OPERATIONS.md).

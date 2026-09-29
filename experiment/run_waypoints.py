@@ -23,6 +23,5 @@ if __name__ == '__main__':
     # initialize MPC
     MyMPC = ModelPredictiveControl(configDict, buildFlag, waypoints, saveFlag, config_file_name)
 
-    # Run our asynchronous main function forever
-    asyncio.ensure_future(MyMPC.run(x0, T))
-    asyncio.get_event_loop().run_forever()
+    # The controller returns on completion and stops on errors/cancellation.
+    asyncio.run(MyMPC.run(x0, T))

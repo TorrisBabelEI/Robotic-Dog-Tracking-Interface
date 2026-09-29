@@ -1,0 +1,13 @@
+{
+  "R_marker_body": null,
+  "body_to_marker_position_body_m": null,
+  "clock": {
+    "qtm_origin_s": null,
+    "pi_origin_s": null,
+    "scale": 1.0,
+    "uncertainty_s": null,
+    "provenance": ""
+  },
+  "max_reference_gap_s": 0.03,
+  "derivative_window_samples": 5
+}

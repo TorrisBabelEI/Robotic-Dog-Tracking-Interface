@@ -8,7 +8,7 @@ from experiment import cleanup_verified_go1_file as cleanup
 
 
 PI_FILE = "/home/pi/Robotic-Dog-Tracking-Interface/logs/dry-run/go1.csv"
-UBUNTU_COPY = "/home/aims/Yuxuan/Robotic-Dog-Tracking-Interface/logs/archive/go1.csv"
+UBUNTU_COPY = "/home/operator/Robotic-Dog-Tracking-Interface/logs/archive/go1.csv"
 TEST_HASH = "a" * 64
 
 

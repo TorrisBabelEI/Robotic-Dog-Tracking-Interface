@@ -10,7 +10,7 @@ class BundleTests(unittest.TestCase):
             root=Path(folder)/'bundle'
             manifest=build(root)
             self.assertFalse(manifest['policy_development'])
-            self.assertFalse(any('policy_' in n or 'command_owner' in n or 'Wenjian' in n
+            self.assertFalse(any('policy_' in n or 'command_owner' in n or '_test_walking_policy/' in n
                                  for n in manifest['source_sha256']))
             with self.assertRaises(ValueError):build(root)
             self.assertEqual(verify(root),manifest)

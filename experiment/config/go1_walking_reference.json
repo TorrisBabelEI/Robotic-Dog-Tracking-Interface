@@ -1,0 +1,302 @@
+{
+  "schema": "go1-walking-reference-v1",
+  "review_date": "2026-09-29",
+  "source_project": "${GO1_POLICY_SOURCE}",
+  "path_bindings": "docs/GO1_LOCAL_PATHS.md",
+  "scope": "Offline reference only; not a deployable config and never applied to the parent prone controller.",
+  "hardware_launch_enabled": false,
+  "evidence_archive": "logs/walking-integration/review-qxq_oay2",
+  "recorded_three_run_baseline": {
+    "tuning": {
+      "schema": "go1-walking-tuning-v1",
+      "joint_order": [
+        "FR_hip",
+        "FR_thigh",
+        "FR_calf",
+        "FL_hip",
+        "FL_thigh",
+        "FL_calf",
+        "RR_hip",
+        "RR_thigh",
+        "RR_calf",
+        "RL_hip",
+        "RL_thigh",
+        "RL_calf"
+      ],
+      "kp": [
+        80,
+        80,
+        80,
+        80,
+        80,
+        80,
+        80,
+        80,
+        80,
+        80,
+        80,
+        80
+      ],
+      "kd": [
+        1.5,
+        1.5,
+        1.5,
+        1.5,
+        1.5,
+        1.5,
+        2.5,
+        3,
+        2.5,
+        2.5,
+        3,
+        2.5
+      ],
+      "command": [
+        0.5,
+        0,
+        0
+      ],
+      "duration_s": 5,
+      "gain_ramp_s": 0.3
+    },
+    "identity": {
+      "policy_sender": "7cd009881acd018fd1505a79eb21b54b613a9e33a7b9a915a8f195168e73d5ef",
+      "policy/weights.npz": "3f2c91766afdb73102e37bec804be488c8e26d1f2ea64ec81b3e6455fce692d2",
+      "worker.py": "73ca09fbaa134296229b61416ac2b5cb51e91b54232ca67fbcb71738c82f80c7",
+      "estimator.json": "ea6617b955bc9da0916ad9ac76c4c0bd28cbfd8714b189aaec90b5b11a4f5c32"
+    }
+  },
+  "recorded_new_policy_completion": {
+    "run": "manual_1790469987345486410",
+    "tuning": {
+      "schema": "go1-walking-tuning-v1",
+      "joint_order": [
+        "FR_hip",
+        "FR_thigh",
+        "FR_calf",
+        "FL_hip",
+        "FL_thigh",
+        "FL_calf",
+        "RR_hip",
+        "RR_thigh",
+        "RR_calf",
+        "RL_hip",
+        "RL_thigh",
+        "RL_calf"
+      ],
+      "kp": [
+        80,
+        80,
+        80,
+        80,
+        80,
+        80,
+        80,
+        80,
+        80,
+        80,
+        80,
+        80
+      ],
+      "kd": [
+        1.5,
+        1.5,
+        1.5,
+        1.5,
+        1.5,
+        1.5,
+        2.5,
+        3,
+        2.5,
+        2.5,
+        3,
+        2.5
+      ],
+      "command": [
+        0.5,
+        0,
+        0
+      ],
+      "duration_s": 5,
+      "gain_ramp_s": 0.3
+    },
+    "identity": {
+      "policy_sender": "7cd009881acd018fd1505a79eb21b54b613a9e33a7b9a915a8f195168e73d5ef",
+      "policy/weights.npz": "64e97206b40761e53ffb8fcfb76463814f77c2c2ebed2c4294e4c6422c672d68",
+      "worker.py": "c7a490d3c1a6eb5f08f3019c50975ae1a98d0fea8ea41091adcb2811061c0324",
+      "estimator.json": "ea6617b955bc9da0916ad9ac76c4c0bd28cbfd8714b189aaec90b5b11a4f5c32"
+    }
+  },
+  "local_package_mirrors": {
+    "normal_walking": {
+      "integrity_passed": true,
+      "checked_files": 104,
+      "tuning": {
+        "schema": "go1-walking-tuning-v1",
+        "joint_order": [
+          "FR_hip",
+          "FR_thigh",
+          "FR_calf",
+          "FL_hip",
+          "FL_thigh",
+          "FL_calf",
+          "RR_hip",
+          "RR_thigh",
+          "RR_calf",
+          "RL_hip",
+          "RL_thigh",
+          "RL_calf"
+        ],
+        "kp": [
+          80,
+          80,
+          80,
+          80,
+          80,
+          80,
+          80,
+          80,
+          80,
+          80,
+          80,
+          80
+        ],
+        "kd": [
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.5,
+          3,
+          2.5,
+          2.5,
+          3,
+          2.5
+        ],
+        "command": [
+          0.5,
+          0,
+          0
+        ],
+        "duration_s": 5,
+        "gain_ramp_s": 0.3
+      },
+      "file_sha256": {
+        "policy_sender": "7cd009881acd018fd1505a79eb21b54b613a9e33a7b9a915a8f195168e73d5ef",
+        "policy/weights.npz": "64e97206b40761e53ffb8fcfb76463814f77c2c2ebed2c4294e4c6422c672d68",
+        "worker.py": "7030d231fe7a0e730edd5f641d13eae2dd6e68a347ee1d9b6587a05b183e0563",
+        "estimator.json": "ea6617b955bc9da0916ad9ac76c4c0bd28cbfd8714b189aaec90b5b11a4f5c32"
+      }
+    },
+    "normal_walking_long": {
+      "integrity_passed": true,
+      "checked_files": 104,
+      "tuning": {
+        "schema": "go1-walking-tuning-v1",
+        "joint_order": [
+          "FR_hip",
+          "FR_thigh",
+          "FR_calf",
+          "FL_hip",
+          "FL_thigh",
+          "FL_calf",
+          "RR_hip",
+          "RR_thigh",
+          "RR_calf",
+          "RL_hip",
+          "RL_thigh",
+          "RL_calf"
+        ],
+        "kp": [
+          80,
+          80,
+          80,
+          80,
+          80,
+          80,
+          80,
+          80,
+          80,
+          80,
+          80,
+          80
+        ],
+        "kd": [
+          1.5,
+          1.5,
+          1.5,
+          1.5,
+          1.5,
+          1.5,
+          2.5,
+          3,
+          2.5,
+          2.5,
+          3,
+          2.5
+        ],
+        "command": [
+          0.5,
+          0,
+          0
+        ],
+        "duration_s": 120.0,
+        "gain_ramp_s": 0.3
+      },
+      "file_sha256": {
+        "policy_sender": "447eec0c4612cc1c209051d9368c67154f8cfcc95a7fa8bf0400c8e7c712ab70",
+        "policy/weights.npz": "64e97206b40761e53ffb8fcfb76463814f77c2c2ebed2c4294e4c6422c672d68",
+        "worker.py": "7030d231fe7a0e730edd5f641d13eae2dd6e68a347ee1d9b6587a05b183e0563",
+        "estimator.json": "ea6617b955bc9da0916ad9ac76c4c0bd28cbfd8714b189aaec90b5b11a4f5c32"
+      }
+    }
+  },
+  "pending": [
+    "contact threshold recalibration from September 27 evidence",
+    "resolve policy export comparison metadata",
+    "match latest gains/worker/weights/estimator/current boot to exact run evidence",
+    "long-duration hardware evidence"
+  ],
+  "reference_report": "docs/GO1_WALKING_INTEGRATION.md",
+  "installed_estimator": {
+    "description": "Installed body linear-velocity estimation path; measured-contact 21-state Kalman filter",
+    "state_layout": {
+      "body_position": 3,
+      "body_velocity": 3,
+      "foot_positions": 12,
+      "acceleration_bias": 3
+    },
+    "worker_class": "VelocityIntegrityGuard(MeasuredContactKalmanEstimator(...))",
+    "inputs": [
+      "aligned IMU orientation/gyro/acceleration",
+      "joint position and velocity",
+      "measured foot-force contact"
+    ],
+    "uses_motor_torque_for_contact": false,
+    "policy_observation_velocity_indices": [
+      0,
+      1,
+      2
+    ],
+    "velocity_observation_scale": 2,
+    "separate_ubuntu_estimator_required": false,
+    "local_release_bound_sha256": {
+      "worker.py": "7030d231fe7a0e730edd5f641d13eae2dd6e68a347ee1d9b6587a05b183e0563",
+      "measured_contact_kf.py": "270b25761e7bcb710a97840f232b945f164ecb86d756b2c36ccecf0edba733d3",
+      "native_leg_kf.py": "e94a89237ccd8b3cf36b31f346851aed6aab4517e4b039a78914243a9221bd29",
+      "build_measured_contact_kf.py": "c469bdb8b38b0b49c8529add44f9140aa3b3e7a845868adddcc5509e61868555",
+      "native/leg_kf_compute.cpp": "3da2079a32936dceaefbe64ca451a03fa7567aeffd0c83ead6a549cd1a1b2f91",
+      "contact_build/libmeasured_contact_kf.so": "a0be05519a696453316b316303f70d775dcd99524221518a5faed870232c0037",
+      "contact_build/manifest.json": "237dde70d78f0546391f73593bb78bd3b4e6cc670513057cb31bdf04432d94d5",
+      "alignment_build/libcommon_time_review.so": "5c292c95b4d495b4970886cdcf1a5d04d623a8df773a41a3f13f003283cd044a",
+      "estimator.json": "ea6617b955bc9da0916ad9ac76c4c0bd28cbfd8714b189aaec90b5b11a4f5c32",
+      "policy_runtime.py": "b60ee57b5beab064e459ec8d26afba5b02ed40594cd8524c3e73acc0dccb1356",
+      "native_policy.py": "2252d37ab9cda191871c4555749dfc4a451cd3355b78ebfeaf857e9a71d3a37b"
+    },
+    "verified_on_live_pi_this_turn": false,
+    "clock_refresh_scope": "Passive boot tick-time rebinding, not estimator training/contact recalibration; visits all recognized installed packages"
+  },
+  "operator_procedure": "docs/GO1_WALKING_OPERATIONS.md"
+}

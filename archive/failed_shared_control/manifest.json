@@ -1,0 +1,111 @@
+{
+  "status": "unsuccessful_source_purged_evidence_retained",
+  "archived_on": "2026-09-29",
+  "reason": "Operator confirmed the older shared-control experiment was not successful; it is not an available torque-control workflow.",
+  "source_period": "April 2026 Git history; not part of the later torque verification work",
+  "files": [
+    {
+      "original_path": "experiment/traj/joint_control_20260422110811.csv",
+      "archived_path": "data/joint_control_20260422110811.csv",
+      "sha256": "8710f9e344f59fd2da757193a0046f9192ee2d4c2d4e7fe007fd0bf2f8fc62cf"
+    },
+    {
+      "original_path": "experiment/traj/joint_control_20260422111243.csv",
+      "archived_path": "data/joint_control_20260422111243.csv",
+      "sha256": "be05d36c8a837b8af5f5501c5bb9c4ce582e0ed92128df97376a8c4eddeb036b"
+    },
+    {
+      "original_path": "experiment/traj/joint_control_traj_20260422110845.png",
+      "archived_path": "data/joint_control_traj_20260422110845.png",
+      "sha256": "9e40a6e42635ef1d6fb14184f2c39047aff0a94f7ab4fb9edec8db033e1742fd"
+    },
+    {
+      "original_path": "experiment/traj/joint_control_traj_20260422111441.png",
+      "archived_path": "data/joint_control_traj_20260422111441.png",
+      "sha256": "13193154df76c2a8dd2c4add94bf3ff7f46a59fccf7a9bfc459c06a20e2bd512"
+    },
+    {
+      "original_path": "experiment/traj/joint_control_trust_20260422110811.png",
+      "archived_path": "data/joint_control_trust_20260422110811.png",
+      "sha256": "51fd977a14570f3ec21aca34ed4b24b21959a5d3ffe12812aa6b03df1936c4ec"
+    },
+    {
+      "original_path": "experiment/traj/joint_control_trust_20260422111243.png",
+      "archived_path": "data/joint_control_trust_20260422111243.png",
+      "sha256": "f44d01f9c6a18ebf4b6f00953cfa26a39d21603d775675cea35d925c9d9e477f"
+    }
+  ],
+  "purged_on": "2026-09-29",
+  "removed_source_files": [
+    {
+      "original_path": "experiment/run_joint_control.py",
+      "removed_snapshot_sha256": "dab36b1b8e332b3d6b4c1e65982e054893ea6702ce852acdb53898081d4c529d"
+    },
+    {
+      "original_path": "experiment/src/ModelPredictiveControlObstacle.py",
+      "removed_snapshot_sha256": "e26f1230f499e58b71f0f7acb3f7e1611cee7c8035e2e127ccc09a0962a93557"
+    },
+    {
+      "original_path": "experiment/src/joystick_handler.py",
+      "removed_snapshot_sha256": "63ec5ac2daab5689931b893348631149aaa28b8c649a65edf054af92b925d6de"
+    },
+    {
+      "original_path": "experiment/traj/trust_animate.py",
+      "removed_snapshot_sha256": "c71bb44e01c826831f729b7d49e03e424b1c6be5f7a4ef58733952062e6f6ed3"
+    }
+  ],
+  "legacy_torque_entry_removed": {
+    "path": "experiment/run_torque_tracking.py",
+    "original_added_commit": "ca72025",
+    "original_added_date": "2026-02-20",
+    "sender_disabled_commit": "43f9a0a",
+    "sender_disabled_date": "2026-08-30",
+    "remaining_guard_removed_date": "2026-09-29"
+  },
+  "preserved_current_files_sha256": {
+    "CMakeLists.txt": "1ab5b097d35a613921f768d39932c95b84fe103d83c8260a4efdef4eb5760ec6",
+    "experiment/analyze_lowlevel_log.py": "e69c27c845127b06ae8ea35b06ed49d33ae24fffcaeebe10063755fc731ae4e4",
+    "experiment/inspect_prone_pose.py": "a5f3234928d1a3721198f814f83bf9aa7e26a37bc3b745fcf35998bbb894dcb3",
+    "experiment/prepare_go1_bundle.py": "13cf349b1d19d384cae9b934ce41b306a29c42274cd29d71f6833a152fb57045",
+    "experiment/prepare_go1_cleanup.py": "a33245e5f8bf3e40b5f33f1c976df99dd1783f816d6f64bd55268cb20161d918",
+    "experiment/prepare_go1_prone_engagement.sh": "e9c2759f079e8c9e84f8ff2b11a23d21273021b31b78d17b4bd549f908021232",
+    "experiment/remote_control.py": "5da4a893df54233c0a31af154297d917fd752017704811d5c85028fd16644ae8",
+    "experiment/run_go1_pi_adapter_check.sh": "2a0469e7249c3c85cb8fda14838072fcacd6b006077ff354e9cf1e3c1452f3ca",
+    "experiment/run_go1_prone_recovery_cluster.py": "276dbad423c4a3bfd05a923a46f483f624eea8902111aef964ce72d06553b98b",
+    "experiment/run_go1_support_cluster.sh": "053b13231fa5fafa992761c0df787bdf8934f25f182473aa6063177ca53cdcf5",
+    "experiment/run_go1_torque_cluster.py": "d06e4411197ea30c0e9e57b25779facbf681ef6999f43ca56296c94ce9dd7250",
+    "experiment/run_waypoints_from_file.py": "bf2de34b55d3bea067bc9776952b2a673340a925c4392e81979b706f40c2dde8",
+    "src/DenseTrajectoryTracker.py": "93c7e67ed19dba6dfe57614789cd0e0f3748b149e0338e1c8f7e96cabd7d7925",
+    "src/go1_command_owner.hpp": "1e0c42134cd4098e6c0d77bc7dd5044783248aa40badd242eb8ccde77edc86f4",
+    "src/go1_kinematics.cpp": "b0d78514ca68de9a82dc9335b713dbfa3b0452f8876d8cd13dc963e24fa20f07",
+    "src/go1_kinematics.hpp": "0ba8276b5557df9f1e22cd44cee566aba13b886adcc2921558e9516871500584",
+    "src/go1_log_file.hpp": "99a226e82722a68636314caa947d22a9c5c25303771caf340d4943b478cef14e",
+    "src/go1_lowlevel_experiment.cpp": "b322c0c806b3273ca7367fa18a43d662a7a22b2c417c64fa34dfaf3c10959f29",
+    "src/go1_operator_support.hpp": "eac86daab9afc5ee69fbe9a619d60ce47615edef480f64f756555648ec3b9a34",
+    "src/go1_operator_support_probe.cpp": "dc730b0f6a8bf6061f9ddbf18f12525bfec0ce9d87773ac0c8debb2e1861110f",
+    "src/go1_policy_dispatch.hpp": "26306e1020899edb49f341575b2c2c8cbda7320a0ad45c28445b8fb60cc7569d",
+    "src/go1_policy_evidence.hpp": "708abc800331abe8080deed9afd89dbae2151552427e9d9889dea5611ea1989b",
+    "src/go1_policy_offline_bridge.cpp": "2a51635942801356a4537af15438113aad7d9d2f1bf015d3ac61c20fe30dc302",
+    "src/go1_policy_operator.hpp": "b72e2a6704f0bf259560a5a1b0b3035a70fbad03b741b36e1d96e4f5be46ffa1",
+    "src/go1_policy_process.hpp": "61bbda239f5441f4de3e0c0ec13a73c4d6f30ac5d3b9f38e6e3fae54be7c1c86",
+    "src/go1_policy_runtime.hpp": "42e165c6d2d92967fcb67d205dcc06388dc2077ae929aedcca2d9994388f511d",
+    "src/go1_policy_session.hpp": "e9755777f50cbce80b2424a1d01a02b867f701403321022160d2e15b23fccda5",
+    "src/go1_policy_worker.hpp": "644d5d8ee5e3fcfc20ff6168051edff1c93b626b1d205c2f3b005809c678c402",
+    "src/go1_sdk_policy_input.hpp": "01b052f2b29e55fc47c43822eea21b29899696a2a7d7c82482438d940d7f4ef6",
+    "src/go1_sdk_receive.hpp": "11b0ac774ad7c94619fa703c370c3008acd7e487fe0bbd9beaa9ac3b5490c718",
+    "src/go1_sdk_transport.hpp": "43f089ba9956a122df84fe081e8fd76c4178988e1b276dd31b861b94c0a2de8b",
+    "src/keyboard_handler.py": "5bd3e5221de3c5c8c037b34e5188ba381a61df46cf936b3648fda73dbd6cd2ff",
+    "test/go1_ground_entry_test.cpp": "6b8e6321549efef50e91e9290eb1477aff333668cc894faeab3f978e9d280aa4",
+    "test/go1_ground_exit_test.cpp": "7e17a7a618f87a3885199fcc499f92947f1c702c285b4da8b62ce65eee53751f",
+    "test/go1_kinematics_test.cpp": "da64446a2152bdd7acc587bcfd62ae22c6f56b1623f73fd7558ba9cc44fd75f1",
+    "test/go1_log_file_test.cpp": "f1bdf0bc40088a9776d5ed835c036b459898a6f2324cc8380cb7106a5db1e85d",
+    "test/go1_operator_support_server_test.cpp": "3cbb7c2c406d15030c15f0b191f7bdd4259baef0ca4dc16eca211edc64598f2f",
+    "test/go1_operator_support_test.cpp": "1d40a0e0e6aaf176b703a8b5183cfbad6d220213e0e96b997a1d3aeae5c136ac",
+    "test/go1_policy_session_test.cpp": "d97c5855a351fdd1e139e7b2a2fb51b2bbea9bd772f0206827e6115a88e8153d",
+    "test/go1_policy_worker_test.cpp": "dae36a6f5199538b963f8cda633f8978ed54638936ba4e1fcb7ced07e04a7cac",
+    "test/go1_prone_low_rise_test.cpp": "520f263404285cddaeeca19716cff2c83ae0d8cd1314ba54ab3f9c8062546dad",
+    "test/go1_sdk_command_adapter_test.cpp": "5c3f74803281377cc3473cc2078133d9ee0414f1728e1cff0775f0e0fec47a9f",
+    "test/go1_sdk_transport_test.cpp": "b14747d9306a5d086cb3d5dea87664afef8ea76f362817150ba2501936c733c0",
+    "test/go1_standing_capture_test.cpp": "879fc79f706b0146e0078b4dc276424dfa8139f3579bee20406b310149465ef4"
+  }
+}

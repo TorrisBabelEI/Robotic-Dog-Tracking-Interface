@@ -3,9 +3,12 @@
 Research decision for this setup: proceed with a ground-start route. A hanging
 rig is not a prerequisite for all further work. The operator accepts some
 experimental risk; mechanical damage cannot be ruled out or guaranteed absent.
-This document distinguishes an implementable direction from an already
-validated robot procedure. The next executable procedure is
-[experiment section 2.1.7](GO1_LOWLEVEL_EXPERIMENT.md#217-no-lift-route-passive-observation-of-factory-traffic--current-step).
+This is the historical design rationale for the parent's prone controller,
+not the current operator sequence. The factory observations, software checks
+and bounded normal prone engagement described below are now complete; see
+[the condensed results](GO1_LOWLEVEL_EXPERIMENT.md#21-retained-results-and-remaining-legacy-scope).
+Use [the walking procedure](GO1_WALKING_OPERATIONS.md) for the separately
+maintained installed package.
 
 ## What the sources establish
 
@@ -102,27 +105,15 @@ recovery. Keeping initial tests close to the floor limits the consequence of
 that unresolved fault. Neither the factory remote nor `PowerProtect` guarantees
 against all contact or mechanical damage.
 
-## Concrete progression
+## Outcome of this route
 
-1. **Now: 15-second passive capture, robot prone, factory controller unchanged.**
-   Establish whether native traffic is visible on the Pi. Section 2.1.7 provides
-   exact commands and archiving. No motor command is sent by the recorder.
-2. **After packet review: record one factory rise/return.** Obtain the measured
-   trajectory, timing, available state and command fields, and visual evidence
-   of initial/final contact. Preserve this as a reference; do not replay it as
-   an external controller. If native traffic is inaccessible, choose an
-   alternative logging interface before requesting that cycle.
-3. **Implement prone engagement/release and one low rise/return.** Use the new
-   measured baseline and retain the already-tested watchdog, remote stop and
-   logging paths. Add tests only for the changed control path, then write the
-   first low-height hardware procedure. This route needs a separate entry path;
-   removing the `ground-handover` lock would not implement it.
-4. **Increase height, then add the experiment.** After reviewing the real low-rise
-   result, progress to a brief stand, a small squat, then a small torque overlay.
-   Single-leg and sequential lifts remain later, because they change the support
-   polygon. MOCAP is not needed for the initial acquisition/engagement trial;
-   it may be added for quantitative motion assessment later.
+Factory standing and return-to-prone captures, prone software checks and the
+bounded normal engagement/release hardware trial are complete. Their former
+2.1.x command blocks are retained only in [the historical record](GO1_LOWLEVEL_2_1_HISTORY.md).
+Do not repeat those captures or checks as setup for walking.
 
-The lack of a rig no longer blocks progress. The unresolved items are now
-specific measurements and control implementations, each connected to the next
-trial rather than an indefinite requirement for more synthetic tests.
+Low-rise, standing takeover, squat and torque-overlay hardware remain future
+work for this legacy controller. Increasing height or changing support would
+need its own implementation and reviewed physical result; the accepted prone
+trial does not release those modes. Current walking uses the independent
+supervised package and the operator sequence linked above.

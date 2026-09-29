@@ -241,18 +241,14 @@ class OptimalControl:
         cost = 0.0
 
         # for soc
+        target = parameter[self.dimStates:self.dimStates+2]
+        # Decision states are x_1 through x_N. Penalize each once, paired
+        # with u_0 through u_(N-1), including the terminal predicted state.
         for idx in range(self.stepNumHorizon):
-            if idx == 0:
-                xNow = xAll[0:self.dimStates]
-                target = parameter[self.dimStates:self.dimStates+2]
-            else:
-                xNow = xAll[self.dimStates*(idx-1) : self.dimStates*idx]
-                uNow = uAll[self.dimInputs*(idx-1) : self.dimInputs*idx]
-                cost += self.w2 * uNow[0]**2
-                cost += self.w3 * uNow[1]**2
-                cost += self.w4 * uNow[2]**2
+            xNow = xAll[self.dimStates*idx : self.dimStates*(idx+1)]
+            uNow = uAll[self.dimInputs*idx : self.dimInputs*(idx+1)]
             cost += self.w1 * ((xNow[0] - target[0]) **2 + (xNow[1] - target[1]) **2)
-            # cost += self.w2 * (math.atan2((target[1] - xNow[1]),(target[0] - xNow[0])) - xNow[2]) ** 2
+            cost += self.w2 * uNow[0]**2 + self.w3 * uNow[1]**2 + self.w4 * uNow[2]**2
 
         return cost
 

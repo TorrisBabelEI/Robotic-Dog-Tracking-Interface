@@ -5,7 +5,7 @@ import argparse,collections,hashlib,json,math,struct,sys
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from experiment.decode_native_go1_pcap import packets,sdk_crc,command_crc
-# Adapted from Wenjian_test_walking_policy/deployment/review_factory_effort.py.
+# Adapted from the separate policy project: deployment/review_factory_effort.py.
 
 def total_effort(command,state,profile="factory"):
     if profile not in ("factory", "sdk"):raise ValueError("Unknown command CRC profile")
